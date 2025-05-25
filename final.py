@@ -304,7 +304,7 @@ def main():
             else: handle_basket_orders_atomic(final,strike,atm_ce,atm_pe,half_ce,half_pe,fy)
         else: st.info("No action.")
     oc, qc = st.session_state["option_chain_api_count"], st.session_state["quote_api_count"]
-    st.write(f"APIs: {oc}+{qc} = {oc+qc}")
+    #st.write(f"APIs: {oc}+{qc} = {oc+qc}")
     time.sleep(5); st.rerun()
 
 if __name__=="__main__":
