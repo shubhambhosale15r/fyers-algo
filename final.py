@@ -305,7 +305,7 @@ def main():
         else: st.info("No action.")
     oc, qc = st.session_state["option_chain_api_count"], st.session_state["quote_api_count"]
     st.write(f"APIs: {oc}+{qc} = {oc+qc}")
-    time.sleep(60); st.rerun()
+    time.sleep(5); st.rerun()
 
 if __name__=="__main__":
     logging.basicConfig(filename="fyers_order_debug.log", level=logging.INFO, format="%(asctime)s - %(message)s")
