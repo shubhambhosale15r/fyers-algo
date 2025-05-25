@@ -1,0 +1,5 @@
+streamlit>=1.31.1
+pandas>=2.2.1
+numpy>=1.26.4
+pytz>=2024.1
+fyers-apiv3>=3.0.0
