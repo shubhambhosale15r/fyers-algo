@@ -375,7 +375,7 @@ def main():
     qc = st.session_state["quote_api_count"]
     st.write(f"Option Chain API calls: {oc}  •  Quote API calls: {qc}  •  Total: {oc+qc}")
 
-    time.sleep(60)
+    time.sleep(5) # time in seconds
     st.rerun()
 
 if __name__ == "__main__":
