@@ -6,8 +6,7 @@ from datetime import datetime, timedelta
 import pytz
 from fyers_apiv3 import fyersModel
 import logging
-import csv
-import os
+import uuid
 
 # — SESSION STATE FOR API COUNTERS & RATE LIMIT —
 if "option_chain_api_count" not in st.session_state:
@@ -32,6 +31,8 @@ if "paper_pnl" not in st.session_state:
     st.session_state.paper_pnl = {"realized": 0.0, "unrealized": 0.0}
 if "trade_history" not in st.session_state:
     st.session_state.trade_history = []
+if "paper_trade_active" not in st.session_state:
+    st.session_state.paper_trade_active = False
 
 def enforce_rate_limit():
     now = datetime.now()
@@ -228,26 +229,30 @@ def handle_paper_trade(signal, atm_strike, atm_ce, atm_pe, half_ce, half_pe):
         # Buy half_pe, Sell atm_pe
         buy_symbol = half_pe["symbol"]
         sell_symbol = atm_pe["symbol"]
-        orders.append({"symbol": buy_symbol, "qty": lot, "side": 1})
-        orders.append({"symbol": sell_symbol, "qty": lot, "side": -1})
+        orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY"})
+        orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL"})
         st.write(f"[PAPER] BUY {buy_symbol} & SELL {sell_symbol}")
         
     elif signal == "SELL":
         # Buy half_ce, Sell atm_ce
         buy_symbol = half_ce["symbol"]
         sell_symbol = atm_ce["symbol"]
-        orders.append({"symbol": buy_symbol, "qty": lot, "side": 1})
-        orders.append({"symbol": sell_symbol, "qty": lot, "side": -1})
+        orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY"})
+        orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL"})
         st.write(f"[PAPER] BUY {buy_symbol} & SELL {sell_symbol}")
         
     elif signal == "SIDEWAYS":
         # Close all positions
         if st.session_state.paper_positions:
             for symbol, position in st.session_state.paper_positions.items():
+                # Close with opposite action
+                close_action = "SELL" if position["action"] == "BUY" else "BUY"
+                close_side = -1 if position["side"] == 1 else 1
                 orders.append({
                     "symbol": symbol,
                     "qty": position["qty"],
-                    "side": -1 if position["side"] == 1 else 1  # Opposite side to close
+                    "side": close_side,
+                    "action": close_action
                 })
             st.write("[PAPER] Exiting all positions...")
         else:
@@ -264,13 +269,13 @@ def handle_paper_trade(signal, atm_strike, atm_ce, atm_pe, half_ce, half_pe):
             continue
             
         # Create trade record
-        trade_id = f"PAPER-{timestamp}-{order['symbol']}"
+        trade_id = str(uuid.uuid4())[:8]
         trade = {
             "id": trade_id,
             "timestamp": timestamp,
             "symbol": order["symbol"],
             "qty": order["qty"],
-            "side": order["side"],
+            "action": order["action"],
             "price": ltp,
             "signal": signal,
             "type": "OPEN" if signal in ["BUY", "SELL"] else "CLOSE"
@@ -281,8 +286,7 @@ def handle_paper_trade(signal, atm_strike, atm_ce, atm_pe, half_ce, half_pe):
         st.session_state.trade_history.append(trade)
         placed_ids.append(trade_id)
         
-        action = "Bought" if order["side"] == 1 else "Sold"
-        st.write(f"[PAPER] {action} {order['qty']} of {order['symbol']} at {ltp}")
+        st.write(f"[PAPER] {order['action']} {order['qty']} of {order['symbol']} at {ltp}")
     
     return placed_ids
 
@@ -293,12 +297,15 @@ def update_paper_positions(trade):
     if trade["type"] == "OPEN":
         # Open new position
         st.session_state.paper_positions[symbol] = {
+            "symbol": trade["symbol"],
             "id": trade["id"],
             "entry_time": trade["timestamp"],
             "qty": trade["qty"],
-            "side": trade["side"],
+            "action": trade["action"],
+            "side": 1 if trade["action"] == "BUY" else -1,
             "entry_price": trade["price"],
-            "current_price": trade["price"]
+            "current_price": trade["price"],
+            "signal": trade["signal"]
         }
     else:
         # Close position
@@ -306,7 +313,7 @@ def update_paper_positions(trade):
             position = st.session_state.paper_positions[symbol]
             
             # Calculate PnL
-            if position["side"] == 1:  # Long position
+            if position["action"] == "BUY":  # Long position
                 pnl = (trade["price"] - position["entry_price"]) * position["qty"]
             else:  # Short position
                 pnl = (position["entry_price"] - trade["price"]) * position["qty"]
@@ -314,22 +321,14 @@ def update_paper_positions(trade):
             # Update realized PnL
             st.session_state.paper_pnl["realized"] += pnl
             
+            # Record closing trade with PnL
+            trade["pnl"] = pnl
+            
             # Remove position
             del st.session_state.paper_positions[symbol]
-            st.write(f"[PAPER] Closed {symbol} position. PnL: {pnl:.2f}")
-            
-            # Record closing trade
-            st.session_state.trade_history.append({
-                "id": trade["id"],
-                "timestamp": trade["timestamp"],
-                "symbol": symbol,
-                "qty": trade["qty"],
-                "side": trade["side"],
-                "price": trade["price"],
-                "signal": trade["signal"],
-                "type": "CLOSE",
-                "pnl": pnl
-            })
+            st.write(f"[PAPER] Closed {position['action']} position for {symbol}. PnL: {pnl:.2f}")
+        else:
+            st.warning(f"[PAPER] No position found to close for {symbol}")
 
 
 def update_unrealized_pnl(cid, token):
@@ -338,7 +337,7 @@ def update_unrealized_pnl(cid, token):
         return
         
     total_unrealized = 0.0
-    symbols = list(st.session_state.paper_positions.keys())
+    symbols = set(pos["symbol"] for pos in st.session_state.paper_positions.values())
     
     # Get current LTPs for all positions
     for symbol in symbols:
@@ -346,15 +345,18 @@ def update_unrealized_pnl(cid, token):
         if ltp is None:
             continue
             
-        position = st.session_state.paper_positions[symbol]
-        position["current_price"] = ltp
-        
-        if position["side"] == 1:  # Long position
-            pnl = (ltp - position["entry_price"]) * position["qty"]
-        else:  # Short position
-            pnl = (position["entry_price"] - ltp) * position["qty"]
-            
-        total_unrealized += pnl
+        # Update all positions for this symbol
+        for key, position in st.session_state.paper_positions.items():
+            if position["symbol"] == symbol:
+                position["current_price"] = ltp
+                
+                # Calculate position PnL
+                if position["action"] == "BUY":  # Long position
+                    pnl = (ltp - position["entry_price"]) * position["qty"]
+                else:  # Short position
+                    pnl = (position["entry_price"] - ltp) * position["qty"]
+                    
+                total_unrealized += pnl
     
     st.session_state.paper_pnl["unrealized"] = total_unrealized
 
@@ -434,17 +436,31 @@ def show_paper_trading_page(cid, token):
     col1, col2 = st.columns(2)
     col1.metric("💰 Realized PnL", f"₹{st.session_state.paper_pnl['realized']:.2f}")
     col2.metric("📊 Unrealized PnL", f"₹{st.session_state.paper_pnl['unrealized']:.2f}")
+    st.metric("💵 Total PnL", f"₹{st.session_state.paper_pnl['realized'] + st.session_state.paper_pnl['unrealized']:.2f}")
     
     # Current positions
     st.subheader("📊 Current Positions")
     if st.session_state.paper_positions:
-        positions_df = pd.DataFrame.from_dict(st.session_state.paper_positions, orient="index")
-        positions_df["PnL"] = positions_df.apply(
-            lambda row: (row["current_price"] - row["entry_price"]) * row["qty"] if row["side"] == 1 
-            else (row["entry_price"] - row["current_price"]) * row["qty"], 
-            axis=1
-        )
-        st.dataframe(positions_df[["symbol", "qty", "side", "entry_price", "current_price", "PnL"]])
+        positions_list = []
+        for symbol, position in st.session_state.paper_positions.items():
+            # Calculate current PnL for each position
+            if position["action"] == "BUY":
+                pnl = (position["current_price"] - position["entry_price"]) * position["qty"]
+            else:
+                pnl = (position["entry_price"] - position["current_price"]) * position["qty"]
+                
+            positions_list.append({
+                "Symbol": position["symbol"],
+                "Action": position["action"],
+                "Qty": position["qty"],
+                "Entry Price": position["entry_price"],
+                "Current Price": position["current_price"],
+                "PnL": pnl,
+                "Signal": position["signal"]
+            })
+        
+        positions_df = pd.DataFrame(positions_list)
+        st.dataframe(positions_df)
     else:
         st.info("No open positions")
     
@@ -452,6 +468,20 @@ def show_paper_trading_page(cid, token):
     st.subheader("📜 Trade History")
     if st.session_state.trade_history:
         history_df = pd.DataFrame(st.session_state.trade_history)
+        
+        # Reorder columns for better readability
+        if not history_df.empty:
+            desired_columns = ["timestamp", "symbol", "action", "qty", "price", "signal", "type", "pnl"]
+            available_columns = [col for col in desired_columns if col in history_df.columns]
+            history_df = history_df[available_columns]
+            
+            # Format timestamp
+            history_df["timestamp"] = pd.to_datetime(history_df["timestamp"])
+            history_df["timestamp"] = history_df["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S")
+            
+            # Sort by timestamp
+            history_df = history_df.sort_values("timestamp", ascending=False)
+        
         st.dataframe(history_df)
         
         # Download button
@@ -496,6 +526,8 @@ def main():
                 st.session_state.page = "paper_trading"
             if st.button("🔙 Back to Trading"):
                 st.session_state.page = "trading"
+        else:
+            st.session_state.page = "trading"
         
         st.subheader("🔐 API Credentials")
         cid = st.text_input("Client ID", value=st.session_state.cid)
@@ -557,7 +589,10 @@ def main():
         signal = format_and_show(chain, f"Current Expiry: {curr_date}", ltp, show_signals=True)
         strike, atm_ce, atm_pe, half_ce, half_pe, _ = get_atm_and_half_price_option(chain, ltp)
         
-        if signal in ("BUY", "SELL"):
+        # Check if we have valid option data
+        if not half_pe or not atm_pe or not half_ce or not atm_ce:
+            st.warning("Couldn't find required option strikes. Unable to place trades.")
+        elif signal in ("BUY", "SELL"):
             if not auto_trade:
                 st.info(f"Auto trade disabled; signal: {signal}.")
             else:
