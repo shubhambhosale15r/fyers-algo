@@ -7,7 +7,7 @@ import pytz
 from fyers_apiv3 import fyersModel
 import logging
 import uuid
-import threading
+from streamlit_autorefresh import st_autorefresh
 
 # — SESSION STATE FOR API COUNTERS & RATE LIMIT —
 if "option_chain_api_count" not in st.session_state:
@@ -365,7 +365,6 @@ def update_unrealized_pnl(cid, token):
     st.session_state.pnl_update_time = datetime.now()
 
 
-
 def update_position_prices(cid, token):
     if not st.session_state.paper_positions:
         return
@@ -442,11 +441,9 @@ def format_and_show(chain, title, ltp, show_signals=False):
 
 
 def show_paper_trading_page(cid, token):
+    # update the paper trade dashboard @ 30 seconds
+    count = st_autorefresh(interval=30000, key="paper_refresh")
     st.subheader("📝 Paper Trading Dashboard")
-    
-    # Update position prices and PnL
-    update_position_prices(cid, token)
-    update_unrealized_pnl(cid, token)
     
     # Display PnL summary
     col1, col2, col3 = st.columns(3)
@@ -459,21 +456,15 @@ def show_paper_trading_page(cid, token):
     update_time = st.session_state.pnl_update_time.strftime("%Y-%m-%d %H:%M:%S")
     st.caption(f"Last updated: {update_time}")
     
-    # Refresh button
-    if st.button("🔄 Refresh Prices"):
-        update_position_prices(cid, token)
-        update_unrealized_pnl(cid, token)
-        st.rerun()
-    
     # Current positions
     st.subheader("📊 Current Positions")
     if st.session_state.paper_positions:
         positions_list = []
         for symbol, position in st.session_state.paper_positions.items():
             # Calculate current PnL for each position
-            if position["action"] == "BUY":
+            if position["action"] == "BUY":  # Long position
                 pnl = (position["current_price"] - position["entry_price"]) * position["qty"]
-            else:
+            else:  # Short position
                 pnl = (position["entry_price"] - position["current_price"]) * position["qty"]
                 
             positions_list.append({
@@ -547,10 +538,6 @@ def main():
     if "token" not in st.session_state:
         st.session_state.token = ""
     
-    # Start PnL updater if not running
-    # if "pnl_updater_running" not in st.session_state or not st.session_state.pnl_updater_running:
-    #     start_pnl_updater()
-    
     # Settings sidebar
     with st.sidebar:
         st.subheader("⚙️ Trading Settings")
@@ -587,9 +574,14 @@ def main():
     if "page" not in st.session_state:
         st.session_state.page = "trading"
     
+    # AUTO-REFRESH PAPER TRADING DATA
+    # This will run regardless of current page
+    if paper_trade and st.session_state.paper_positions:
+        update_position_prices(cid, token)
+        update_unrealized_pnl(cid, token)
+    
     # Paper trading page
     if st.session_state.page == "paper_trading" and paper_trade:
-        update_unrealized_pnl(cid, token)
         show_paper_trading_page(cid, token)
         return
     
@@ -598,14 +590,6 @@ def main():
     if not(cid and token and sym): 
         st.info("Enter credentials in the sidebar.")
         return
-    
-    # UPDATE PNL HERE - during main data refresh
-    if paper_trade and st.session_state.paper_positions:
-        update_position_prices(cid, token)
-        update_unrealized_pnl(cid, token)
-        update_time = st.session_state.pnl_update_time.strftime("%Y-%m-%d %H:%M:%S")
-        st.caption(f"Paper PnL last updated: {update_time}")
-    
     
     fy = fyersModel.FyersModel(client_id=cid, token=token, is_async=False, log_path="")
     enforce_rate_limit()
