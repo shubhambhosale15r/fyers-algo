@@ -355,29 +355,34 @@ def update_paper_positions(trade):
             st.warning(f"[PAPER] No position found to close for {symbol}")
 
 
-def update_unrealized_pnl():
+def update_unrealized_pnl(cid, token):
+    """Update unrealized PnL using current market prices"""
     if not st.session_state.paper_positions:
         st.session_state.paper_pnl["unrealized"] = 0.0
         return
         
     total_unrealized = 0.0
     for symbol, position in st.session_state.paper_positions.items():
-        # For paper trading, we'll use the entry price as current price
-        # since we don't have real-time updates in this simplified version
-        # (This will be updated by the background thread)
-        if "current_price" not in position:
-            position["current_price"] = position["entry_price"]
-                
+        # Get current LTP for the symbol
+        ltp = get_symbol_ltp(cid, token, symbol)
+        if ltp is None:
+            # If we can't get current price, use last known price
+            ltp = position.get("current_price", position["entry_price"])
+        
+        # Update current price
+        position["current_price"] = ltp
+        
         # Calculate position PnL
         if position["action"] == "BUY":  # Long position
-            pnl = (position["current_price"] - position["entry_price"]) * position["qty"]
+            pnl = (ltp - position["entry_price"]) * position["qty"]
         else:  # Short position
-            pnl = (position["entry_price"] - position["current_price"]) * position["qty"]
+            pnl = (position["entry_price"] - ltp) * position["qty"]
             
         total_unrealized += pnl
     
     st.session_state.paper_pnl["unrealized"] = total_unrealized
     st.session_state.pnl_update_time = datetime.now()
+
 
 
 def update_position_prices(cid, token):
@@ -460,7 +465,7 @@ def show_paper_trading_page(cid, token):
     
     # Update position prices and PnL
     update_position_prices(cid, token)
-    update_unrealized_pnl()
+    update_unrealized_pnl(cid, token)
     
     # Display PnL summary
     col1, col2, col3 = st.columns(3)
@@ -603,6 +608,7 @@ def main():
     
     # Paper trading page
     if st.session_state.page == "paper_trading" and paper_trade:
+        update_unrealized_pnl(cid, token)
         show_paper_trading_page(cid, token)
         return
     
@@ -611,6 +617,11 @@ def main():
     if not(cid and token and sym): 
         st.info("Enter credentials in the sidebar.")
         return
+    
+    # UPDATE PNL HERE - during main data refresh
+    if paper_trade and st.session_state.paper_positions:
+        update_unrealized_pnl(cid, token)
+    
     
     fy = fyersModel.FyersModel(client_id=cid, token=token, is_async=False, log_path="")
     enforce_rate_limit()
