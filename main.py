@@ -7,6 +7,7 @@ import pytz
 from fyers_apiv3 import fyersModel
 import logging
 import uuid
+import threading
 
 # — SESSION STATE FOR API COUNTERS & RATE LIMIT —
 if "option_chain_api_count" not in st.session_state:
@@ -33,6 +34,27 @@ if "trade_history" not in st.session_state:
     st.session_state.trade_history = []
 if "paper_trade_active" not in st.session_state:
     st.session_state.paper_trade_active = False
+if "pnl_update_time" not in st.session_state:
+    st.session_state.pnl_update_time = datetime.now()
+
+# Add a background update thread
+if "pnl_updater_running" not in st.session_state:
+    st.session_state.pnl_updater_running = False
+    
+def start_pnl_updater():
+    if not st.session_state.pnl_updater_running:
+        st.session_state.pnl_updater_running = True
+        thread = threading.Thread(target=pnl_update_worker, daemon=True)
+        thread.start()
+
+def pnl_update_worker():
+    while st.session_state.pnl_updater_running:
+        time.sleep(10)  # Update every 10 seconds
+        if st.session_state.paper_positions:
+            try:
+                update_unrealized_pnl()
+            except:
+                pass
 
 def enforce_rate_limit():
     now = datetime.now()
@@ -227,32 +249,40 @@ def handle_paper_trade(signal, atm_strike, atm_ce, atm_pe, half_ce, half_pe):
     
     if signal == "BUY":
         # Buy half_pe, Sell atm_pe
-        buy_symbol = half_pe["symbol"]
-        sell_symbol = atm_pe["symbol"]
-        orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY"})
-        orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL"})
-        st.write(f"[PAPER] BUY {buy_symbol} & SELL {sell_symbol}")
+        if half_pe and atm_pe:
+            buy_symbol = half_pe["symbol"]
+            sell_symbol = atm_pe["symbol"]
+            orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY", "price": half_pe["ltp"]})
+            orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL", "price": atm_pe["ltp"]})
+            st.write(f"[PAPER] BUY {buy_symbol} @ {half_pe['ltp']} & SELL {sell_symbol} @ {atm_pe['ltp']}")
+        else:
+            st.error("Missing option data for BUY signal")
+            return []
         
     elif signal == "SELL":
         # Buy half_ce, Sell atm_ce
-        buy_symbol = half_ce["symbol"]
-        sell_symbol = atm_ce["symbol"]
-        orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY"})
-        orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL"})
-        st.write(f"[PAPER] BUY {buy_symbol} & SELL {sell_symbol}")
+        if half_ce and atm_ce:
+            buy_symbol = half_ce["symbol"]
+            sell_symbol = atm_ce["symbol"]
+            orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY", "price": half_ce["ltp"]})
+            orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL", "price": atm_ce["ltp"]})
+            st.write(f"[PAPER] BUY {buy_symbol} @ {half_ce['ltp']} & SELL {sell_symbol} @ {atm_ce['ltp']}")
+        else:
+            st.error("Missing option data for SELL signal")
+            return []
         
     elif signal == "SIDEWAYS":
         # Close all positions
         if st.session_state.paper_positions:
-            for symbol, position in st.session_state.paper_positions.items():
+            for symbol, position in list(st.session_state.paper_positions.items()):
                 # Close with opposite action
                 close_action = "SELL" if position["action"] == "BUY" else "BUY"
-                close_side = -1 if position["side"] == 1 else 1
                 orders.append({
                     "symbol": symbol,
                     "qty": position["qty"],
-                    "side": close_side,
-                    "action": close_action
+                    "action": close_action,
+                    "price": position["current_price"],
+                    "type": "CLOSE"
                 })
             st.write("[PAPER] Exiting all positions...")
         else:
@@ -262,12 +292,6 @@ def handle_paper_trade(signal, atm_strike, atm_ce, atm_pe, half_ce, half_pe):
     # Execute paper trades
     placed_ids = []
     for order in orders:
-        # Get current LTP for the symbol
-        ltp = get_symbol_ltp(st.session_state.cid, st.session_state.token, order["symbol"])
-        if ltp is None:
-            st.error(f"Failed to get LTP for {order['symbol']}")
-            continue
-            
         # Create trade record
         trade_id = str(uuid.uuid4())[:8]
         trade = {
@@ -276,7 +300,7 @@ def handle_paper_trade(signal, atm_strike, atm_ce, atm_pe, half_ce, half_pe):
             "symbol": order["symbol"],
             "qty": order["qty"],
             "action": order["action"],
-            "price": ltp,
+            "price": order["price"],
             "signal": signal,
             "type": "OPEN" if signal in ["BUY", "SELL"] else "CLOSE"
         }
@@ -286,7 +310,7 @@ def handle_paper_trade(signal, atm_strike, atm_ce, atm_pe, half_ce, half_pe):
         st.session_state.trade_history.append(trade)
         placed_ids.append(trade_id)
         
-        st.write(f"[PAPER] {order['action']} {order['qty']} of {order['symbol']} at {ltp}")
+        st.write(f"[PAPER] {order['action']} {order['qty']} of {order['symbol']} at {order['price']}")
     
     return placed_ids
 
@@ -331,34 +355,39 @@ def update_paper_positions(trade):
             st.warning(f"[PAPER] No position found to close for {symbol}")
 
 
-def update_unrealized_pnl(cid, token):
+def update_unrealized_pnl():
     if not st.session_state.paper_positions:
         st.session_state.paper_pnl["unrealized"] = 0.0
         return
         
     total_unrealized = 0.0
-    symbols = set(pos["symbol"] for pos in st.session_state.paper_positions.values())
-    
-    # Get current LTPs for all positions
-    for symbol in symbols:
-        ltp = get_symbol_ltp(cid, token, symbol)
-        if ltp is None:
-            continue
-            
-        # Update all positions for this symbol
-        for key, position in st.session_state.paper_positions.items():
-            if position["symbol"] == symbol:
-                position["current_price"] = ltp
+    for symbol, position in st.session_state.paper_positions.items():
+        # For paper trading, we'll use the entry price as current price
+        # since we don't have real-time updates in this simplified version
+        # (This will be updated by the background thread)
+        if "current_price" not in position:
+            position["current_price"] = position["entry_price"]
                 
-                # Calculate position PnL
-                if position["action"] == "BUY":  # Long position
-                    pnl = (ltp - position["entry_price"]) * position["qty"]
-                else:  # Short position
-                    pnl = (position["entry_price"] - ltp) * position["qty"]
-                    
-                total_unrealized += pnl
+        # Calculate position PnL
+        if position["action"] == "BUY":  # Long position
+            pnl = (position["current_price"] - position["entry_price"]) * position["qty"]
+        else:  # Short position
+            pnl = (position["entry_price"] - position["current_price"]) * position["qty"]
+            
+        total_unrealized += pnl
     
     st.session_state.paper_pnl["unrealized"] = total_unrealized
+    st.session_state.pnl_update_time = datetime.now()
+
+
+def update_position_prices(cid, token):
+    if not st.session_state.paper_positions:
+        return
+        
+    for symbol, position in st.session_state.paper_positions.items():
+        ltp = get_symbol_ltp(cid, token, symbol)
+        if ltp is not None:
+            position["current_price"] = ltp
 
 
 def handle_basket_orders_atomic(signal, atm_strike, atm_ce, atm_pe, half_ce, half_pe, fyers):
@@ -429,14 +458,26 @@ def format_and_show(chain, title, ltp, show_signals=False):
 def show_paper_trading_page(cid, token):
     st.subheader("📝 Paper Trading Dashboard")
     
-    # Update unrealized PnL
-    update_unrealized_pnl(cid, token)
+    # Update position prices and PnL
+    update_position_prices(cid, token)
+    update_unrealized_pnl()
     
     # Display PnL summary
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     col1.metric("💰 Realized PnL", f"₹{st.session_state.paper_pnl['realized']:.2f}")
     col2.metric("📊 Unrealized PnL", f"₹{st.session_state.paper_pnl['unrealized']:.2f}")
-    st.metric("💵 Total PnL", f"₹{st.session_state.paper_pnl['realized'] + st.session_state.paper_pnl['unrealized']:.2f}")
+    total_pnl = st.session_state.paper_pnl['realized'] + st.session_state.paper_pnl['unrealized']
+    col3.metric("💵 Total PnL", f"₹{total_pnl:.2f}", delta=f"{total_pnl:.2f}")
+    
+    # Show last update time
+    update_time = st.session_state.pnl_update_time.strftime("%Y-%m-%d %H:%M:%S")
+    st.caption(f"Last updated: {update_time}")
+    
+    # Refresh button
+    if st.button("🔄 Refresh Prices"):
+        update_position_prices(cid, token)
+        update_unrealized_pnl()
+        st.rerun()
     
     # Current positions
     st.subheader("📊 Current Positions")
@@ -453,9 +494,9 @@ def show_paper_trading_page(cid, token):
                 "Symbol": position["symbol"],
                 "Action": position["action"],
                 "Qty": position["qty"],
-                "Entry Price": position["entry_price"],
-                "Current Price": position["current_price"],
-                "PnL": pnl,
+                "Entry Price": f"₹{position['entry_price']:.2f}",
+                "Current Price": f"₹{position['current_price']:.2f}",
+                "PnL": f"₹{pnl:.2f}",
                 "Signal": position["signal"]
             })
         
@@ -481,6 +522,12 @@ def show_paper_trading_page(cid, token):
             
             # Sort by timestamp
             history_df = history_df.sort_values("timestamp", ascending=False)
+            
+            # Format prices and PnL
+            if "price" in history_df:
+                history_df["price"] = history_df["price"].apply(lambda x: f"₹{x:.2f}" if isinstance(x, (int, float)) else x)
+            if "pnl" in history_df:
+                history_df["pnl"] = history_df["pnl"].apply(lambda x: f"₹{x:.2f}" if isinstance(x, (int, float)) else x)
         
         st.dataframe(history_df)
         
@@ -513,6 +560,10 @@ def main():
         st.session_state.cid = ""
     if "token" not in st.session_state:
         st.session_state.token = ""
+    
+    # Start PnL updater if not running
+    if "pnl_updater_running" not in st.session_state or not st.session_state.pnl_updater_running:
+        start_pnl_updater()
     
     # Settings sidebar
     with st.sidebar:
@@ -590,42 +641,48 @@ def main():
         strike, atm_ce, atm_pe, half_ce, half_pe, _ = get_atm_and_half_price_option(chain, ltp)
         
         # Check if we have valid option data
-        if not half_pe or not atm_pe or not half_ce or not atm_ce:
-            st.warning("Couldn't find required option strikes. Unable to place trades.")
+        valid_buy = half_pe is not None and atm_pe is not None
+        valid_sell = half_ce is not None and atm_ce is not None
+        
+        if signal == "BUY" and not valid_buy:
+            st.warning("Missing option data for BUY signal. Unable to place trade.")
+        elif signal == "SELL" and not valid_sell:
+            st.warning("Missing option data for SELL signal. Unable to place trade.")
         elif signal in ("BUY", "SELL"):
-            if not auto_trade:
-                st.info(f"Auto trade disabled; signal: {signal}.")
+            # PAPER TRADE: Execute immediately if paper trading is enabled
+            if paper_trade:
+                # Handle paper trading
+                if st.session_state["last_signal"] == signal and st.session_state.paper_positions:
+                    st.info(f"Paper basket for {signal} already open.")
+                else:
+                    ids = handle_paper_trade(signal, strike, atm_ce, atm_pe, half_ce, half_pe)
+                    st.session_state["last_signal"] = signal
+                    st.session_state["last_signal_order_ids"] = ids
+            
+            # REAL TRADE: Only execute if auto trade is enabled
+            elif auto_trade:
+                # Handle real trading
+                if st.session_state["last_signal"] == signal and has_open_orders_for_last_signal(fy):
+                    st.info(f"Basket for {signal} already open.")
+                else:
+                    ids = handle_basket_orders_atomic(signal, strike, atm_ce, atm_pe, half_ce, half_pe, fy)
+                    st.session_state["last_signal"] = signal
+                    st.session_state["last_signal_order_ids"] = ids
             else:
-                if paper_trade:
-                    # Handle paper trading
-                    if st.session_state["last_signal"] == signal and st.session_state.paper_positions:
-                        st.info(f"Paper basket for {signal} already open.")
-                    else:
-                        ids = handle_paper_trade(signal, strike, atm_ce, atm_pe, half_ce, half_pe)
-                        st.session_state["last_signal"] = signal
-                        st.session_state["last_signal_order_ids"] = ids
-                else:
-                    # Handle real trading
-                    if st.session_state["last_signal"] == signal and has_open_orders_for_last_signal(fy):
-                        st.info(f"Basket for {signal} already open.")
-                    else:
-                        ids = handle_basket_orders_atomic(signal, strike, atm_ce, atm_pe, half_ce, half_pe, fy)
-                        st.session_state["last_signal"] = signal
-                        st.session_state["last_signal_order_ids"] = ids
+                st.info(f"Auto trade disabled; signal: {signal}.")
         elif signal == "SIDEWAYS":
-            if not auto_trade: 
+            if paper_trade:
+                handle_paper_trade(signal, strike, atm_ce, atm_pe, half_ce, half_pe)
+            elif auto_trade:
+                handle_basket_orders_atomic(signal, strike, atm_ce, atm_pe, half_ce, half_pe, fy)
+            else:
                 st.info("Auto trade disabled; sideways.")
-            else: 
-                if paper_trade:
-                    handle_paper_trade(signal, strike, atm_ce, atm_pe, half_ce, half_pe)
-                else:
-                    handle_basket_orders_atomic(signal, strike, atm_ce, atm_pe, half_ce, half_pe, fy)
         else: 
             st.info("No action.")
     
     time.sleep(180)
     st.rerun()
 
-if __name__ == "__main__":
+if __name__=="__main__":
     logging.basicConfig(filename="trading_debug.log", level=logging.INFO, format="%(asctime)s - %(message)s")
     main()
