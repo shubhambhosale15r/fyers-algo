@@ -37,25 +37,6 @@ if "paper_trade_active" not in st.session_state:
 if "pnl_update_time" not in st.session_state:
     st.session_state.pnl_update_time = datetime.now()
 
-# Add a background update thread
-if "pnl_updater_running" not in st.session_state:
-    st.session_state.pnl_updater_running = False
-    
-def start_pnl_updater():
-    if not st.session_state.pnl_updater_running:
-        st.session_state.pnl_updater_running = True
-        thread = threading.Thread(target=pnl_update_worker, daemon=True)
-        thread.start()
-
-def pnl_update_worker():
-    while st.session_state.pnl_updater_running:
-        time.sleep(10)  # Update every 10 seconds
-        if st.session_state.paper_positions:
-            try:
-                update_unrealized_pnl()
-            except:
-                pass
-
 def enforce_rate_limit():
     now = datetime.now()
     window = now - st.session_state["api_window_start"]
@@ -481,7 +462,7 @@ def show_paper_trading_page(cid, token):
     # Refresh button
     if st.button("🔄 Refresh Prices"):
         update_position_prices(cid, token)
-        update_unrealized_pnl()
+        update_unrealized_pnl(cid, token)
         st.rerun()
     
     # Current positions
@@ -567,8 +548,8 @@ def main():
         st.session_state.token = ""
     
     # Start PnL updater if not running
-    if "pnl_updater_running" not in st.session_state or not st.session_state.pnl_updater_running:
-        start_pnl_updater()
+    # if "pnl_updater_running" not in st.session_state or not st.session_state.pnl_updater_running:
+    #     start_pnl_updater()
     
     # Settings sidebar
     with st.sidebar:
@@ -620,7 +601,10 @@ def main():
     
     # UPDATE PNL HERE - during main data refresh
     if paper_trade and st.session_state.paper_positions:
+        update_position_prices(cid, token)
         update_unrealized_pnl(cid, token)
+        update_time = st.session_state.pnl_update_time.strftime("%Y-%m-%d %H:%M:%S")
+        st.caption(f"Paper PnL last updated: {update_time}")
     
     
     fy = fyersModel.FyersModel(client_id=cid, token=token, is_async=False, log_path="")
@@ -691,7 +675,7 @@ def main():
         else: 
             st.info("No action.")
     
-    time.sleep(180)
+    time.sleep(60)
     st.rerun()
 
 if __name__=="__main__":
