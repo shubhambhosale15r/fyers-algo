@@ -129,6 +129,9 @@ def compute_signals(merged_df, atm_strike):
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
+            # Display PCR values
+        st.write(f"ITM PCR: {itm_pcr:.4f} (PE OI: {itm_pe_oi}, CE OI: {itm_ce_oi})")
+        st.write(f"OTM PCR: {otm_pcr:.4f} (PE OI: {otm_pe_oi}, CE OI: {otm_ce_oi})")
     else:
         if itm_pe_oi < 0 and itm_ce_oi > 0 and otm_pe_oi > 0 and otm_ce_oi < 0:
             signal ="BUY"
@@ -136,10 +139,9 @@ def compute_signals(merged_df, atm_strike):
             signal = "SELL"
         else:
             signal="SIDEWAYS"
+        st.write(f"ITM :  PE OI: {itm_pe_oi}, CE OI: {itm_ce_oi}")
+        st.write(f"OTM :  PE OI: {otm_pe_oi}, CE OI: {otm_ce_oi}")
 
-    # Display PCR values
-    st.write(f"ITM PCR: {itm_pcr:.4f} (PE OI: {itm_pe_oi}, CE OI: {itm_ce_oi})")
-    st.write(f"OTM PCR: {otm_pcr:.4f} (PE OI: {otm_pe_oi}, CE OI: {otm_ce_oi})")
     
     return signal
 
