@@ -227,140 +227,80 @@ def handle_paper_trade(signal, atm_strike, atm_ce, atm_pe, half_ce, half_pe):
     orders = []
     lot = 75
     timestamp = datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Changed logic: Only exit positions when getting opposite signal
-    current_position = st.session_state.get("last_signal")
-    
-    if signal == "BUY":
-        if current_position == "SELL":
-            # Exit SELL position first
-            if st.session_state.paper_positions:
-                for symbol, position in list(st.session_state.paper_positions.items()):
-                    close_action = "SELL" if position["action"] == "BUY" else "BUY"
-                    orders.append({
-                        "symbol": symbol,
-                        "qty": position["qty"],
-                        "action": close_action,
-                        "price": position["current_price"],
-                        "type": "CLOSE"
-                    })
-            st.write("[PAPER] Exiting SELL position for BUY signal")
-        
-        # Place BUY basket if not already in position
-        if current_position != "BUY" and half_pe and atm_pe:
-            buy_symbol = half_pe["symbol"]
-            sell_symbol = atm_pe["symbol"]
-            orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY", "price": half_pe["ltp"]})
-            orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL", "price": atm_pe["ltp"]})
-            st.write(f"[PAPER] BUY {buy_symbol} @ {half_pe['ltp']} & SELL {sell_symbol} @ {atm_pe['ltp']}")
-        
-    elif signal == "SELL":
-        if current_position == "BUY":
-            # Exit BUY position first
-            if st.session_state.paper_positions:
-                for symbol, position in list(st.session_state.paper_positions.items()):
-                    close_action = "SELL" if position["action"] == "BUY" else "BUY"
-                    orders.append({
-                        "symbol": symbol,
-                        "qty": position["qty"],
-                        "action": close_action,
-                        "price": position["current_price"],
-                        "type": "CLOSE"
-                    })
-            st.write("[PAPER] Exiting BUY position for SELL signal")
-        
-        # Place SELL basket if not already in position
-        if current_position != "SELL" and half_ce and atm_ce:
+    current_signal = st.session_state.get("last_signal")
+
+    # Skip if signal is the same as last time (no duplicate orders)
+    if current_signal == signal:
+        st.write(f"[PAPER] Signal {signal} is already active. No new trades.")
+        return []
+
+    # Case 1: BUY → SELL (Exit BUY, Enter SELL)
+    if current_signal == "BUY" and signal == "SELL":
+        # Exit all BUY positions first
+        for symbol, position in list(st.session_state.paper_positions.items()):
+            close_action = "SELL" if position["action"] == "BUY" else "BUY"
+            orders.append({
+                "symbol": symbol,
+                "qty": position["qty"],
+                "action": close_action,
+                "price": position["current_price"],
+                "type": "CLOSE"
+            })
+        st.write("[PAPER] Exiting BUY positions for SELL signal")
+
+        # Enter SELL basket (Bullish Call Spread)
+        if half_ce and atm_ce:
             buy_symbol = half_ce["symbol"]
             sell_symbol = atm_ce["symbol"]
             orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY", "price": half_ce["ltp"]})
             orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL", "price": atm_ce["ltp"]})
             st.write(f"[PAPER] BUY {buy_symbol} @ {half_ce['ltp']} & SELL {sell_symbol} @ {atm_ce['ltp']}")
-        
-    # Changed: SIDEWAYS signal now only holds existing positions
+
+    # Case 2: SELL → BUY (Exit SELL, Enter BUY)
+    elif current_signal == "SELL" and signal == "BUY":
+        # Exit all SELL positions first
+        for symbol, position in list(st.session_state.paper_positions.items()):
+            close_action = "SELL" if position["action"] == "BUY" else "BUY"
+            orders.append({
+                "symbol": symbol,
+                "qty": position["qty"],
+                "action": close_action,
+                "price": position["current_price"],
+                "type": "CLOSE"
+            })
+        st.write("[PAPER] Exiting SELL positions for BUY signal")
+
+        # Enter BUY basket (Bearish Put Spread)
+        if half_pe and atm_pe:
+            buy_symbol = half_pe["symbol"]
+            sell_symbol = atm_pe["symbol"]
+            orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY", "price": half_pe["ltp"]})
+            orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL", "price": atm_pe["ltp"]})
+            st.write(f"[PAPER] BUY {buy_symbol} @ {half_pe['ltp']} & SELL {sell_symbol} @ {atm_pe['ltp']}")
+
+    # Case 3: New signal (no existing position)
+    elif current_signal is None and signal in ["BUY", "SELL"]:
+        if signal == "BUY" and half_pe and atm_pe:
+            buy_symbol = half_pe["symbol"]
+            sell_symbol = atm_pe["symbol"]
+            orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY", "price": half_pe["ltp"]})
+            orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL", "price": atm_pe["ltp"]})
+            st.write(f"[PAPER] BUY {buy_symbol} @ {half_pe['ltp']} & SELL {sell_symbol} @ {atm_pe['ltp']}")
+        elif signal == "SELL" and half_ce and atm_ce:
+            buy_symbol = half_ce["symbol"]
+            sell_symbol = atm_ce["symbol"]
+            orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY", "price": half_ce["ltp"]})
+            orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL", "price": atm_ce["ltp"]})
+            st.write(f"[PAPER] BUY {buy_symbol} @ {half_ce['ltp']} & SELL {sell_symbol} @ {atm_ce['ltp']}")
+
+    # Case 4: SIDEWAYS (do nothing)
     elif signal == "SIDEWAYS":
-        if current_position is None:
-            st.write("[PAPER] SIDEWAYS: No position, doing nothing")
-        else:
-            st.write(f"[PAPER] SIDEWAYS: Holding existing {current_position} position")
-        return []  # No orders for sideways
+        st.write("[PAPER] SIDEWAYS: Holding existing positions")
+        return []
 
-
-
-def handle_basket_orders_atomic(signal, atm_strike, atm_ce, atm_pe, half_ce, half_pe, fyers):
-    orders = []
-    lot=75
-    current_signal = st.session_state.get("last_signal")
-    
-    # Changed logic: Handle position reversal
-    if signal == "BUY":
-        if current_signal == "SELL":
-            # Exit SELL position first
-            try:
-                pos = fyers.positions().get("netPositions", [])
-                for p in pos:
-                    if p.get("segment","").upper()=="NFO" and p.get("qty",0)!=0:
-                        side = -1 if p['qty']>0 else 1
-                        orders.append({
-                            "symbol": p['symbol'],
-                            "qty": abs(int(p['qty'])),
-                            "type": 2,
-                            "side": side,
-                            "productType": "MARGIN",
-                            "validity": "DAY"
-                        })
-                if orders: 
-                    st.write("Exiting existing SELL position for BUY signal")
-            except Exception as e:
-                st.error(f"Exit error: {e}")
-                return []
-        
-        # Place BUY basket if not already in position
-        if current_signal != "BUY" and half_pe and atm_pe:
-            orders.append({"symbol": half_pe["symbol"], "qty": lot, "type":2, "side":1, "productType":"MARGIN","validity":"DAY"})
-            orders.append({"symbol": atm_pe["symbol"],  "qty": lot, "type":2, "side":-1, "productType":"MARGIN","validity":"DAY"})
-            st.write(f"BUY {half_pe['symbol']} & SELL {atm_pe['symbol']}")
-        
-    elif signal == "SELL":
-        if current_signal == "BUY":
-            # Exit BUY position first
-            try:
-                pos = fyers.positions().get("netPositions", [])
-                for p in pos:
-                    if p.get("segment","").upper()=="NFO" and p.get("qty",0)!=0:
-                        side = -1 if p['qty']>0 else 1
-                        orders.append({
-                            "symbol": p['symbol'],
-                            "qty": abs(int(p['qty'])),
-                            "type": 2,
-                            "side": side,
-                            "productType": "MARGIN",
-                            "validity": "DAY"
-                        })
-                if orders: 
-                    st.write("Exiting existing BUY position for SELL signal")
-            except Exception as e:
-                st.error(f"Exit error: {e}")
-                return []
-        
-        # Place SELL basket if not already in position
-        if current_signal != "SELL" and half_ce and atm_ce:
-            orders.append({"symbol": half_ce["symbol"], "qty": lot, "type":2, "side":1, "productType":"MARGIN","validity":"DAY"})
-            orders.append({"symbol": atm_ce["symbol"],  "qty": lot, "type":2, "side":-1, "productType":"MARGIN","validity":"DAY"})
-            st.write(f"BUY {half_ce['symbol']} & SELL {atm_ce['symbol']}")
-        
-    # Changed: SIDEWAYS signal now only holds existing positions
-    elif signal == "SIDEWAYS":
-        if current_signal is None:
-            st.write("SIDEWAYS: No position, doing nothing")
-        else:
-            st.write(f"SIDEWAYS: Holding existing {current_signal} position")
-        return [] # No orders for sideways
-    
-    # Execute paper trades
+    # Execute orders
     placed_ids = []
     for order in orders:
-        # Create trade record
         trade_id = str(uuid.uuid4())[:8]
         trade = {
             "id": trade_id,
@@ -370,18 +310,18 @@ def handle_basket_orders_atomic(signal, atm_strike, atm_ce, atm_pe, half_ce, hal
             "action": order["action"],
             "price": order["price"],
             "signal": signal,
-            "type": "OPEN" if signal in ["BUY", "SELL"] else "CLOSE"
+            "type": "OPEN" if "type" not in order else order["type"]
         }
-        
-        # Update positions and trade history
         update_paper_positions(trade)
         st.session_state.trade_history.append(trade)
         placed_ids.append(trade_id)
-        
         st.write(f"[PAPER] {order['action']} {order['qty']} of {order['symbol']} at {order['price']}")
-    
-    return placed_ids
 
+    # Update last_signal if new positions opened
+    if placed_ids and signal in ["BUY", "SELL"]:
+        st.session_state["last_signal"] = signal
+
+    return placed_ids
 
 def update_paper_positions(trade):
     symbol = trade["symbol"]
@@ -419,6 +359,10 @@ def update_paper_positions(trade):
             # Remove position
             del st.session_state.paper_positions[symbol]
             st.write(f"[PAPER] Closed {position['action']} position for {symbol}. PnL: {pnl:.2f}")
+            
+            # Update last signal if position is closed
+            if not st.session_state.paper_positions:
+                st.session_state["last_signal"] = None
         else:
             st.warning(f"[PAPER] No position found to close for {symbol}")
 
@@ -613,6 +557,7 @@ def show_paper_trading_page(cid, token):
         st.session_state.paper_positions = {}
         st.session_state.paper_pnl = {"realized": 0.0, "unrealized": 0.0}
         st.session_state.trade_history = []
+        st.session_state["last_signal"] = None
         st.success("Paper trading data reset!")
 
 
@@ -717,13 +662,10 @@ def main():
         elif signal in ("BUY", "SELL"):
             # PAPER TRADE: Execute immediately if paper trading is enabled
             if paper_trade:
-                # Handle paper trading
-                if st.session_state["last_signal"] == signal and st.session_state.paper_positions:
-                    st.info(f"Paper basket for {signal} already open.")
-                else:
-                    ids = handle_paper_trade(signal, strike, atm_ce, atm_pe, half_ce, half_pe)
-                    st.session_state["last_signal"] = signal
-                    st.session_state["last_signal_order_ids"] = ids
+                # Always attempt to execute paper trade when signal is generated
+                st.write(f"📢 Signal detected: {signal} - Attempting paper trade")
+                ids = handle_paper_trade(signal, strike, atm_ce, atm_pe, half_ce, half_pe)
+                st.session_state["last_signal_order_ids"] = ids
             
             # REAL TRADE: Only execute if auto trade is enabled
             elif auto_trade:
