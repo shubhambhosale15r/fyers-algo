@@ -599,8 +599,11 @@ def show_paper_trading_page(cid, token):
     col3.metric("💵 Total PnL", f"₹{total_pnl:.2f}", delta=f"{total_pnl:.2f}")
     
     # Show last update time
-    update_time = st.session_state.pnl_update_time.strftime("%Y-%m-%d %H:%M:%S")
-    st.caption(f"Last updated: {update_time}")
+    # update_time = st.session_state.pnl_update_time.strftime("%Y-%m-%d %H:%M:%S")
+    # st.caption(f"Last updated: {update_time}")
+
+    ist = pytz.timezone("Asia/Kolkata")
+    st.write(f"🕒 Updated: {datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S')}")
     
     # Current positions
     st.subheader("📊 Current Positions")
