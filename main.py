@@ -408,42 +408,157 @@ def update_position_prices(cid, token):
 
 def handle_basket_orders_atomic(signal, atm_strike, atm_ce, atm_pe, half_ce, half_pe, fyers):
     orders = []
-    lot=75
-    if signal=="BUY":
-        orders.append({"symbol": half_pe["symbol"], "qty": lot, "type":2, "side":1, "productType":"MARGIN","validity":"DAY"})
-        orders.append({"symbol": atm_pe["symbol"],  "qty": lot, "type":2, "side":-1, "productType":"MARGIN","validity":"DAY"})
-        st.write(f"BUY {half_pe['symbol']} & SELL {atm_pe['symbol']}")
-    elif signal=="SELL":
-        orders.append({"symbol": half_ce["symbol"], "qty": lot, "type":2, "side":1, "productType":"MARGIN","validity":"DAY"})
-        orders.append({"symbol": atm_ce["symbol"],  "qty": lot, "type":2, "side":-1, "productType":"MARGIN","validity":"DAY"})
-        st.write(f"BUY {half_ce['symbol']} & SELL {atm_ce['symbol']}")
-    elif signal=="SIDEWAYS":
-        try:
-            pos= fyers.positions().get("netPositions", [])
-            for p in pos:
-                if p.get("segment","").upper()=="NFO" and p.get("qty",0)!=0:
-                    side = -1 if p['qty']>0 else 1
-                    orders.append({"symbol":p['symbol'],"qty":abs(int(p['qty'])),"type":2,"side":side,"productType":"MARGIN","validity":"DAY"})
-            if orders: st.write("Exiting positions...")
-        except Exception as e:
-            st.error(f"Exit error: {e}")
-            return []
-        for o in orders:
-            place_order_and_check(fyers,o)
-        st.session_state["last_signal"] = None
-        st.session_state["last_signal_order_ids"]=[]
+    lot = 75
+    current_signal = st.session_state.get("last_signal")
+
+    # Skip if signal is the same as last time (no duplicates)
+    if current_signal == signal:
+        st.warning(f"Signal {signal} is already active. No new trades.")
         return []
 
-    placed_ids=[]
-    for o in orders:
-        oid, status = place_order_and_check(fyers, o)
-        if oid is None or status in [1,5]:
-            for pid in placed_ids: cancel_order(fyers, pid)
-            st.session_state["last_signal_order_ids"]=[]
+    # Case 1: BUY → SELL (Exit BUY, Enter SELL)
+    if current_signal == "BUY" and signal == "SELL":
+        # Exit all BUY positions first
+        try:
+            positions = fyers.positions().get("netPositions", [])
+            for p in positions:
+                if p.get("segment") == "NFO" and p.get("qty") != 0:
+                    side = -1 if p["qty"] > 0 else 1  # Reverse position
+                    orders.append({
+                        "symbol": p["symbol"],
+                        "qty": abs(int(p["qty"])),
+                        "type": 2,  # Market order
+                        "side": side,
+                        "productType": "MARGIN",
+                        "validity": "DAY"
+                    })
+            st.write("[LIVE] Exiting BUY positions for SELL signal")
+        except Exception as e:
+            st.error(f"Failed to exit positions: {e}")
+            return []
+
+        # Enter SELL basket (Bullish Call Spread)
+        if half_ce and atm_ce:
+            orders.append({
+                "symbol": half_ce["symbol"], 
+                "qty": lot, 
+                "type": 2, 
+                "side": 1,  # Buy CE
+                "productType": "MARGIN",
+                "validity": "DAY"
+            })
+            orders.append({
+                "symbol": atm_ce["symbol"], 
+                "qty": lot, 
+                "type": 2, 
+                "side": -1,  # Sell CE
+                "productType": "MARGIN",
+                "validity": "DAY"
+            })
+            st.write(f"[LIVE] BUY {half_ce['symbol']} & SELL {atm_ce['symbol']}")
+
+    # Case 2: SELL → BUY (Exit SELL, Enter BUY)
+    elif current_signal == "SELL" and signal == "BUY":
+        # Exit all SELL positions first
+        try:
+            positions = fyers.positions().get("netPositions", [])
+            for p in positions:
+                if p.get("segment") == "NFO" and p.get("qty") != 0:
+                    side = -1 if p["qty"] > 0 else 1  # Reverse position
+                    orders.append({
+                        "symbol": p["symbol"],
+                        "qty": abs(int(p["qty"])),
+                        "type": 2,  # Market order
+                        "side": side,
+                        "productType": "MARGIN",
+                        "validity": "DAY"
+                    })
+            st.write("[LIVE] Exiting SELL positions for BUY signal")
+        except Exception as e:
+            st.error(f"Failed to exit positions: {e}")
+            return []
+
+        # Enter BUY basket (Bearish Put Spread)
+        if half_pe and atm_pe:
+            orders.append({
+                "symbol": half_pe["symbol"], 
+                "qty": lot, 
+                "type": 2, 
+                "side": 1,  # Buy PE
+                "productType": "MARGIN",
+                "validity": "DAY"
+            })
+            orders.append({
+                "symbol": atm_pe["symbol"], 
+                "qty": lot, 
+                "type": 2, 
+                "side": -1,  # Sell PE
+                "productType": "MARGIN",
+                "validity": "DAY"
+            })
+            st.write(f"[LIVE] BUY {half_pe['symbol']} & SELL {atm_pe['symbol']}")
+
+    # Case 3: New signal (no existing position)
+    elif current_signal is None and signal in ["BUY", "SELL"]:
+        if signal == "BUY" and half_pe and atm_pe:
+            orders.append({
+                "symbol": half_pe["symbol"], 
+                "qty": lot, 
+                "type": 2, 
+                "side": 1,  # Buy PE
+                "productType": "MARGIN",
+                "validity": "DAY"
+            })
+            orders.append({
+                "symbol": atm_pe["symbol"], 
+                "qty": lot, 
+                "type": 2, 
+                "side": -1,  # Sell PE
+                "productType": "MARGIN",
+                "validity": "DAY"
+            })
+            st.write(f"[LIVE] BUY {half_pe['symbol']} & SELL {atm_pe['symbol']}")
+        elif signal == "SELL" and half_ce and atm_ce:
+            orders.append({
+                "symbol": half_ce["symbol"], 
+                "qty": lot, 
+                "type": 2, 
+                "side": 1,  # Buy CE
+                "productType": "MARGIN",
+                "validity": "DAY"
+            })
+            orders.append({
+                "symbol": atm_ce["symbol"], 
+                "qty": lot, 
+                "type": 2, 
+                "side": -1,  # Sell CE
+                "productType": "MARGIN",
+                "validity": "DAY"
+            })
+            st.write(f"[LIVE] BUY {half_ce['symbol']} & SELL {atm_ce['symbol']}")
+
+    # Case 4: SIDEWAYS (do nothing)
+    elif signal == "SIDEWAYS":
+        st.write("[LIVE] SIDEWAYS: Holding positions")
+        return []
+
+    # Execute orders
+    placed_ids = []
+    for order in orders:
+        oid, status = place_order_and_check(fyers, order)
+        if oid is None or status in [1, 5]:  # Rejected/Canceled
+            st.error(f"Order failed: {order['symbol']}")
+            # Cancel all pending orders
+            for pid in placed_ids:
+                cancel_order(fyers, pid)
             return []
         placed_ids.append(oid)
 
-    st.success("Basket executed")
+    # Update last_signal if successful
+    if placed_ids:
+        st.session_state["last_signal"] = signal
+        st.success(f"[LIVE] {signal} basket executed!")
+    
     return placed_ids
 
 
