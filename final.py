@@ -17,6 +17,7 @@ if "quote_api_count" not in st.session_state:
 if "api_window_start" not in st.session_state:
     st.session_state["api_window_start"] = datetime.now()
 
+
 # For duplicate order prevention
 if "last_signal" not in st.session_state:
     st.session_state["last_signal"] = None
@@ -629,6 +630,31 @@ def format_and_show(chain, title, ltp, show_signals=False):
         return signal
     return None
 
+def show_signal_history():
+    st.subheader("📜 Signal History")
+    
+    if not st.session_state.get("signal_history", []):
+        st.info("No signal history available yet")
+        return
+    
+    # Create and display dataframe
+    history_df = pd.DataFrame(st.session_state.signal_history)
+    history_df = history_df.sort_values("timestamp", ascending=False)
+    
+    # Format the DataFrame for better display
+    formatted_df = history_df.copy()
+    formatted_df["underlying_ltp"] = formatted_df["underlying_ltp"].apply(lambda x: f"₹{x:.2f}" if isinstance(x, (int, float)) else x)
+    
+    st.dataframe(formatted_df)
+    
+    # Download button
+    csv = history_df.to_csv(index=False)
+    st.download_button(
+        label="Download Signal History",
+        data=csv,
+        file_name="signal_history.csv",
+        mime="text/csv"
+    )
 
 def show_paper_trading_page(cid, token):
     # update the paper trade dashboard @ 30 seconds
@@ -727,6 +753,9 @@ def main():
         st.session_state.cid = ""
     if "token" not in st.session_state:
         st.session_state.token = ""
+    # Add to SESSION STATE INITIALIZATION
+    if "signal_history" not in st.session_state:
+        st.session_state.signal_history = []
     
     # Settings sidebar
     with st.sidebar:
@@ -734,14 +763,17 @@ def main():
         auto_trade = st.checkbox("Enable Auto Trade", value=False)
         paper_trade = st.checkbox("📝 Enable Paper Trading", value=False)
         
+        # Navigation buttons
+        st.subheader("📊 Navigation")
+        if st.button("📈 Signal History"):
+            st.session_state.page = "signal_history"
+        if st.button("🔙 Back to Trading"):
+            st.session_state.page = "trading"
+        
         # Paper trading page navigation
         if paper_trade:
-            if st.button("📊 Go to Paper Trading Dashboard"):
+            if st.button("📊 Paper Trading Dashboard"):
                 st.session_state.page = "paper_trading"
-            if st.button("🔙 Back to Trading"):
-                st.session_state.page = "trading"
-        else:
-            st.session_state.page = "trading"
         
         st.subheader("🔐 API Credentials")
         cid = st.text_input("Client ID", value=st.session_state.cid)
@@ -808,6 +840,15 @@ def main():
     if chain:
         # Display the option chain and PCR signal
         signal = format_and_show(chain, f"Current Expiry: {curr_date}", ltp, show_signals=True)
+                # RECORD SIGNAL TO HISTORY
+        if signal and ltp:
+            timestamp = datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S")
+            st.session_state.signal_history.append({
+                "timestamp": timestamp,
+                "signal": signal,
+                "underlying_ltp": ltp,
+                "expiry_date": curr_date
+            })
         
         # Select strikes based on highest OI change and half-price logic
         sell_pe, buy_pe, sell_ce, buy_ce = select_strikes_based_on_oi(chain)
