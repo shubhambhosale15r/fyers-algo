@@ -141,8 +141,10 @@ def compute_signals(merged_df, atm_strike):
             signal="SIDEWAYS"
         st.write(f"ITM :  PE OI: {itm_pe_oi}, CE OI: {itm_ce_oi}")
         st.write(f"OTM :  PE OI: {otm_pe_oi}, CE OI: {otm_ce_oi}")
-        st.write("50% more otm pe"if otm_pe_oi > 1.5 * otm_ce_oi)
-        st.write("50% more otm ce"if otm_ce_oi > 1.5 * otm_pe_oi)
+        if otm_pe_oi > 1.5 * otm_ce_oi:
+            st.write("50% more otm pe compared to ce")
+        elif otm_ce_oi > 1.5 * otm_pe_oi:
+            st.write("50% more otm ce compared to pe")
 
     
     return signal
