@@ -632,6 +632,10 @@ def format_and_show(chain, title, ltp, show_signals=False):
 
 def show_signal_history():
     st.subheader("📜 Signal History")
+    st_autorefresh(interval=60_000 )  # 60 000 ms = 60 seconds
+    ist = pytz.timezone("Asia/Kolkata")
+    st.write(f"🕒 Updated: {datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S')}")
+    
     
     if not st.session_state.get("signal_history", []):
         st.info("No signal history available yet")
@@ -894,8 +898,8 @@ def main():
         else:
             st.info("No action.")
     
-    time.sleep(60)
-    st.rerun()
+    # time.sleep(60)
+    # st.rerun()
 
 if __name__ == "__main__":
     logging.basicConfig(filename="trading_debug.log", level=logging.INFO, format="%(asctime)s - %(message)s")
