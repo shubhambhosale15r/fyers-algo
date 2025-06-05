@@ -632,7 +632,6 @@ def format_and_show(chain, title, ltp, show_signals=False):
 
 def show_signal_history():
     st.subheader("📜 Signal History")
-    st_autorefresh(interval=60_000 )  # 60 000 ms = 60 seconds
     ist = pytz.timezone("Asia/Kolkata")
     st.write(f"🕒 Updated: {datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S')}")
     
@@ -662,7 +661,6 @@ def show_signal_history():
 
 def show_paper_trading_page(cid, token):
     # update the paper trade dashboard @ 30 seconds
-    count = st_autorefresh(interval=30000, key="paper_refresh")
     st.subheader("📝 Paper Trading Dashboard")
     
     # Display PnL summary
@@ -748,109 +746,127 @@ def show_paper_trading_page(cid, token):
         st.session_state["last_signal"] = None
         st.success("Paper trading data reset!")
 
-
-def main():
-    st.title("Fyers Algo Trading")
-    
-    # Initialize session state
-    if "cid" not in st.session_state:
-        st.session_state.cid = ""
-    if "token" not in st.session_state:
-        st.session_state.token = ""
-    # Add to SESSION STATE INITIALIZATION
-    if "signal_history" not in st.session_state:
-        st.session_state.signal_history = []
-    
-    # Settings sidebar
-    with st.sidebar:
-        st.subheader("⚙️ Trading Settings")
-        auto_trade = st.checkbox("Enable Auto Trade", value=False)
-        paper_trade = st.checkbox("📝 Enable Paper Trading", value=False)
-        
-        # Navigation buttons
-        st.subheader("📊 Navigation")
-        if st.button("📈 Signal History"):
-            st.session_state.page = "signal_history"
-        if st.button("🔙 Back to Trading"):
-            st.session_state.page = "trading"
-        
-        # Paper trading page navigation
-        if paper_trade:
-            if st.button("📊 Paper Trading Dashboard"):
-                st.session_state.page = "paper_trading"
-        
-        st.subheader("🔐 API Credentials")
-        cid = st.text_input("Client ID", value=st.session_state.cid)
-        token = st.text_input("Access Token", type="password", value=st.session_state.token)
-        sym = st.text_input("Symbol (e.g. NSE:NIFTY50-INDEX)", "NSE:NIFTY50-INDEX")
-        
-        # Store credentials in session state
-        st.session_state.cid = cid
-        st.session_state.token = token
-        
-        # Display rate limit info
-        st.subheader("📊 API Usage")
-        oc = st.session_state.get("option_chain_api_count", 0)
-        qc = st.session_state.get("quote_api_count", 0)
-        st.write(f"Option Chain API: {oc}")
-        st.write(f"Quote API: {qc}")
-        st.write(f"Total: {oc+qc}/500 per minute")
-    
-    # Initialize page state
-    if "page" not in st.session_state:
-        st.session_state.page = "trading"
-    
-    # AUTO-REFRESH PAPER TRADING DATA
-    # This will run regardless of current page
-    if paper_trade and st.session_state.paper_positions:
-        update_position_prices(cid, token)
-        update_unrealized_pnl(cid, token)
-
-        # Page routing
-    if st.session_state.page == "signal_history":
-        show_signal_history()
-        return
-
-    
-    # Paper trading page
-    if st.session_state.page == "paper_trading" and paper_trade:
-        show_paper_trading_page(cid, token)
-        return
-    
-    # Main trading page
-    st.subheader("📈 Live Trading")
-    if not (cid and token and sym):
-        st.info("Enter credentials in the sidebar.")
-        return
-    
+def update_all_data(cid, token, sym, paper_trade_enabled):
+    """
+    Update all necessary data at once:
+    - Underlying LTP
+    - Option chain for current expiry
+    - Paper trading position prices and unrealized PnL (if enabled)
+    Returns tuple: (ltp, chain, current_expiry_date)
+    """
+    # Fetch expiry data once
     fy = fyersModel.FyersModel(client_id=cid, token=token, is_async=False, log_path="")
     enforce_rate_limit()
-    st.session_state["option_chain_api_count"] += 1
-    
+    st.session_state["option_chain_api_count"] = st.session_state.get("option_chain_api_count", 0) + 1
+
     meta = fy.optionchain(data={"symbol": sym, "timestamp": ""})
     if meta.get("code") != 200:
         st.error("Failed to fetch expiry data")
-        return
-    
+        return None, None, None
+
     exp = sorted([(e["date"], e.get("expiry")) for e in meta["data"]["expiryData"]],
                  key=lambda x: datetime.strptime(x[0], "%d-%m-%Y"))
     today = datetime.today().date()
     dates = [datetime.strptime(d, "%d-%m-%Y").date() for d, _ in exp]
     idx = next((i for i, d in enumerate(dates) if d >= today), 0)
     curr_date, curr_ts = exp[idx]
-    
+
+    # Get underlying LTP
+    ltp = get_underlying_ltp(cid, token, sym)
+
+    # Get option chain data
+    chain = get_option_chain_data(cid, token, sym, expiry_ts=curr_ts)
+
+    # Update paper trading info if enabled
+    if paper_trade_enabled and st.session_state.get("paper_positions"):
+        update_position_prices(cid, token)
+        update_unrealized_pnl(cid, token)
+
+    return ltp, chain, curr_date
+
+
+def main():
+    st.title("Fyers Algo Trading")
+
+    # Initialize session state
+    if "cid" not in st.session_state:
+        st.session_state.cid = ""
+    if "token" not in st.session_state:
+        st.session_state.token = ""
+    if "signal_history" not in st.session_state:
+        st.session_state.signal_history = []
+
+    # Settings sidebar
+    with st.sidebar:
+        st.subheader("⚙️ Trading Settings")
+        auto_trade = st.checkbox("Enable Auto Trade", value=False)
+        paper_trade = st.checkbox("📝 Enable Paper Trading", value=False)
+
+        # Navigation buttons
+        st.subheader("📊 Navigation")
+        if st.button("📈 Signal History"):
+            st.session_state.page = "signal_history"
+        if st.button("🔙 Back to Trading"):
+            st.session_state.page = "trading"
+        if paper_trade:
+            if st.button("📊 Paper Trading Dashboard"):
+                st.session_state.page = "paper_trading"
+
+        st.subheader("🔐 API Credentials")
+        cid = st.text_input("Client ID", value=st.session_state.cid)
+        token = st.text_input("Access Token", type="password", value=st.session_state.token)
+        sym = st.text_input("Symbol (e.g. NSE:NIFTY50-INDEX)", "NSE:NIFTY50-INDEX")
+
+        # Store credentials
+        st.session_state.cid = cid
+        st.session_state.token = token
+
+        # API usage display
+        st.subheader("📊 API Usage")
+        oc = st.session_state.get("option_chain_api_count", 0)
+        qc = st.session_state.get("quote_api_count", 0)
+        st.write(f"Option Chain API: {oc}")
+        st.write(f"Quote API: {qc}")
+        st.write(f"Total: {oc + qc}/500 per minute")
+
+    # Initialize page state
+    if "page" not in st.session_state:
+        st.session_state.page = "trading"
+
+    # --- GLOBAL REFRESH: refresh everything every 60 seconds ---
+    refresh_interval = 60  # in seconds
+    st_autorefresh(interval=refresh_interval_ms*1000, key="global_refresh")
+
+    # Return early if no credentials/symbol
+    if not (cid and token and sym):
+        st.info("Enter credentials in the sidebar.")
+        return
+
+    # Update all data once per refresh
+    ltp, chain, curr_date = update_all_data(cid, token, sym, paper_trade)
+
     ist = pytz.timezone("Asia/Kolkata")
     st.write(f"🕒 Updated: {datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S')}")
-    
-    ltp = get_underlying_ltp(cid, token, sym)
+
     if ltp:
         st.success(f"📊 Underlying LTP: {ltp}")
-    
-    chain = get_option_chain_data(cid, token, sym, expiry_ts=curr_ts)
+
+    # Routing to pages
+    if st.session_state.page == "signal_history":
+        show_signal_history()
+        return
+
+    if st.session_state.page == "paper_trading" and paper_trade:
+        show_paper_trading_page(cid, token)
+        return
+
+    # Main trading page
+    st.subheader("📈 Live Trading")
+
     if chain:
-        # Display the option chain and PCR signal
         signal = format_and_show(chain, f"Current Expiry: {curr_date}", ltp, show_signals=True)
-                # RECORD SIGNAL TO HISTORY
+
+        # Record signal history
         if signal and ltp:
             timestamp = datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S")
             st.session_state.signal_history.append({
@@ -859,28 +875,25 @@ def main():
                 "underlying_ltp": ltp,
                 "expiry_date": curr_date
             })
-        
+
         # Select strikes based on highest OI change and half-price logic
         sell_pe, buy_pe, sell_ce, buy_ce = select_strikes_based_on_oi(chain)
-        
-        # Validate that we have valid pairs for BUY or SELL
+
+        # Validate pairs for buy/sell
         valid_buy = (sell_pe is not None and buy_pe is not None)
         valid_sell = (sell_ce is not None and buy_ce is not None)
-        
+
         if signal == "BUY" and not valid_buy:
             st.warning("Missing option data for BUY signal. Unable to place trade.")
         elif signal == "SELL" and not valid_sell:
             st.warning("Missing option data for SELL signal. Unable to place trade.")
         elif signal in ("BUY", "SELL"):
-            # PAPER TRADE: Execute immediately if paper trading is enabled
             if paper_trade:
                 st.write(f"📢 Signal detected: {signal} - Attempting paper trade")
                 ids = handle_paper_trade(signal, sell_pe, buy_pe, sell_ce, buy_ce)
                 st.session_state["last_signal_order_ids"] = ids
-            
-            # REAL TRADE: Only execute if auto trade is enabled
             elif auto_trade:
-                if st.session_state["last_signal"] == signal and has_open_orders_for_last_signal(fy):
+                if st.session_state.get("last_signal") == signal and has_open_orders_for_last_signal(fy):
                     st.info(f"Basket for {signal} already open.")
                 else:
                     ids = handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fy)
@@ -897,9 +910,8 @@ def main():
                 st.info("Auto trade disabled; sideways.")
         else:
             st.info("No action.")
-    
-    time.sleep(60)
-    st.rerun()
+
+
 
 if __name__ == "__main__":
     logging.basicConfig(filename="trading_debug.log", level=logging.INFO, format="%(asctime)s - %(message)s")
