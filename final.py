@@ -801,6 +801,12 @@ def main():
     if paper_trade and st.session_state.paper_positions:
         update_position_prices(cid, token)
         update_unrealized_pnl(cid, token)
+
+        # Page routing
+    if st.session_state.page == "signal_history":
+        show_signal_history()
+        return
+
     
     # Paper trading page
     if st.session_state.page == "paper_trading" and paper_trade:
