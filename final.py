@@ -118,7 +118,7 @@ def compute_signals(merged_df, atm_strike):
     otm_ce_oi = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OICh"].sum()
 
     # Avoid division by zero
-    if itm_pe_oi > 0 and itm_ce_oi > 0 and otm_pe_oi>0 and otm_ce_oi>0:
+    if itm_pe_oi > 0 and itm_ce_oi > 0 and otm_pe_oi > 0 and otm_ce_oi > 0:
         itm_pcr = itm_pe_oi / itm_ce_oi 
         otm_pcr = otm_pe_oi / otm_ce_oi 
 
@@ -129,16 +129,15 @@ def compute_signals(merged_df, atm_strike):
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
-            # Display PCR values
         st.write(f"ITM PCR: {itm_pcr:.4f} (PE OI: {itm_pe_oi}, CE OI: {itm_ce_oi})")
         st.write(f"OTM PCR: {otm_pcr:.4f} (PE OI: {otm_pe_oi}, CE OI: {otm_ce_oi})")
     else:
         if itm_pe_oi < 0 and itm_ce_oi > 0 and otm_pe_oi > 0 and otm_pe_oi > 1.5 * otm_ce_oi or otm_ce_oi < 0:
-            signal ="BUY"
-        elif itm_pe_oi > 0 and itm_ce_oi < 0 and  otm_ce_oi > 0 and otm_ce_oi > 1.5 * otm_pe_oi or otm_pe_oi < 0:
+            signal = "BUY"
+        elif itm_pe_oi > 0 and itm_ce_oi < 0 and otm_ce_oi > 0 and otm_ce_oi > 1.5 * otm_pe_oi or otm_pe_oi < 0:
             signal = "SELL"
         else:
-            signal="SIDEWAYS"
+            signal = "SIDEWAYS"
         st.write(f"ITM :  PE OI: {itm_pe_oi}, CE OI: {itm_ce_oi}")
         st.write(f"OTM :  PE OI: {otm_pe_oi}, CE OI: {otm_ce_oi}")
         if otm_pe_oi > 1.5 * otm_ce_oi:
@@ -146,39 +145,59 @@ def compute_signals(merged_df, atm_strike):
         elif otm_ce_oi > 1.5 * otm_pe_oi:
             st.write("50% more otm ce compared to pe")
 
-    
     return signal
 
 
-def get_atm_and_half_price_option(chain, ltp):
+def select_strikes_based_on_oi(chain):
+    """
+    Given the raw option chain list of dicts, return:
+    - For BUY signal: (sell_pe_row, buy_pe_row)
+    - For SELL signal: (sell_ce_row, buy_ce_row)
+    """
     df = pd.DataFrame(chain)
     if df.empty:
-        return None, None, None, None, None, None
+        return None, None, None, None
 
     ce = df[df["option_type"] == "CE"].copy()
     pe = df[df["option_type"] == "PE"].copy()
-    ce = ce[["symbol", "strike_price", "oi", "volume", "ltp", "ask", "bid", "ltpch", "ltpchp", "oich", "oichp", "prev_oi"]]
-    pe = pe[["symbol", "strike_price", "oi", "volume", "ltp", "ask", "bid", "ltpch", "ltpchp", "oich", "oichp", "prev_oi"]]
 
-    strikes = sorted(df["strike_price"].dropna().unique().tolist())
-    atm_strike = min(strikes, key=lambda x: abs(x - ltp))
+    # Ensure numeric OI change exists
+    pe["oich_numeric"] = pd.to_numeric(pe.get("oich", 0), errors="coerce").fillna(0)
+    ce["oich_numeric"] = pd.to_numeric(ce.get("oich", 0), errors="coerce").fillna(0)
 
-    atm_ce_row = ce[ce["strike_price"] == atm_strike].iloc[0].to_dict()
-    atm_pe_row = pe[pe["strike_price"] == atm_strike].iloc[0].to_dict()
+    # SELL_PE: the PE strike with highest increase in OI
+    if not pe.empty:
+        sell_pe_idx = pe["oich_numeric"].idxmax()
+        sell_pe_row = pe.loc[sell_pe_idx].to_dict()
+    else:
+        sell_pe_row = None
 
-    half_pe_row = None
-    pe_cand = pe[pe["strike_price"] < atm_strike].copy()
-    if not pe_cand.empty:
-        pe_cand["ltp_diff"] = (pe_cand["ltp"] - atm_pe_row["ltp"]/2).abs()
-        half_pe_row = pe_cand.nsmallest(1, "ltp_diff").iloc[0].to_dict()
+    # SELL_CE: the CE strike with highest increase in OI
+    if not ce.empty:
+        sell_ce_idx = ce["oich_numeric"].idxmax()
+        sell_ce_row = ce.loc[sell_ce_idx].to_dict()
+    else:
+        sell_ce_row = None
 
-    half_ce_row = None
-    ce_cand = ce[ce["strike_price"] > atm_strike].copy()
-    if not ce_cand.empty:
-        ce_cand["ltp_diff"] = (ce_cand["ltp"] - atm_ce_row["ltp"]/2).abs()
-        half_ce_row = ce_cand.nsmallest(1, "ltp_diff").iloc[0].to_dict()
+    # For BUY signal: find a PE with LTP approx half of sell_pe row's LTP
+    buy_pe_row = None
+    if sell_pe_row is not None:
+        target_half = sell_pe_row.get("ltp", 0) / 2
+        pe_candidates = pe.copy()
+        pe_candidates["ltp_diff"] = (pe_candidates["ltp"] - target_half).abs()
+        if not pe_candidates.empty:
+            buy_pe_row = pe_candidates.nsmallest(1, "ltp_diff").iloc[0].to_dict()
 
-    return atm_strike, atm_ce_row, atm_pe_row, half_ce_row, half_pe_row, df
+    # For SELL signal: find a CE with LTP approx half of sell_ce row's LTP
+    buy_ce_row = None
+    if sell_ce_row is not None:
+        target_half = sell_ce_row.get("ltp", 0) / 2
+        ce_candidates = ce.copy()
+        ce_candidates["ltp_diff"] = (ce_candidates["ltp"] - target_half).abs()
+        if not ce_candidates.empty:
+            buy_ce_row = ce_candidates.nsmallest(1, "ltp_diff").iloc[0].to_dict()
+
+    return sell_pe_row, buy_pe_row, sell_ce_row, buy_ce_row
 
 
 def cancel_order(fyers, order_id):
@@ -237,7 +256,7 @@ def has_open_orders_for_last_signal(fyers):
         return False
 
 
-def handle_paper_trade(signal, atm_strike, atm_ce, atm_pe, half_ce, half_pe):
+def handle_paper_trade(signal, sell_pe, buy_pe, sell_ce, buy_ce):
     orders = []
     lot = 75
     timestamp = datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%Y-%m-%d %H:%M:%S")
@@ -262,13 +281,13 @@ def handle_paper_trade(signal, atm_strike, atm_ce, atm_pe, half_ce, half_pe):
             })
         st.write("[PAPER] Exiting BUY positions for SELL signal")
 
-        # Enter SELL basket (Bullish Call Spread)
-        if half_ce and atm_ce:
-            buy_symbol = half_ce["symbol"]
-            sell_symbol = atm_ce["symbol"]
-            orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY", "price": half_ce["ltp"]})
-            orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL", "price": atm_ce["ltp"]})
-            st.write(f"[PAPER] BUY {buy_symbol} @ {half_ce['ltp']} & SELL {sell_symbol} @ {atm_ce['ltp']}")
+        # Enter SELL basket (Buy CE half-price & Sell CE highest OI-change)
+        if buy_ce and sell_ce:
+            buy_symbol = buy_ce["symbol"]
+            sell_symbol = sell_ce["symbol"]
+            orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY", "price": buy_ce["ltp"]})
+            orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL", "price": sell_ce["ltp"]})
+            st.write(f"[PAPER] BUY {buy_symbol} @ {buy_ce['ltp']} & SELL {sell_symbol} @ {sell_ce['ltp']}")
 
     # Case 2: SELL → BUY (Exit SELL, Enter BUY)
     elif current_signal == "SELL" and signal == "BUY":
@@ -284,28 +303,28 @@ def handle_paper_trade(signal, atm_strike, atm_ce, atm_pe, half_ce, half_pe):
             })
         st.write("[PAPER] Exiting SELL positions for BUY signal")
 
-        # Enter BUY basket (Bearish Put Spread)
-        if half_pe and atm_pe:
-            buy_symbol = half_pe["symbol"]
-            sell_symbol = atm_pe["symbol"]
-            orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY", "price": half_pe["ltp"]})
-            orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL", "price": atm_pe["ltp"]})
-            st.write(f"[PAPER] BUY {buy_symbol} @ {half_pe['ltp']} & SELL {sell_symbol} @ {atm_pe['ltp']}")
+        # Enter BUY basket (Buy PE half-price & Sell PE highest OI-change)
+        if buy_pe and sell_pe:
+            buy_symbol = buy_pe["symbol"]
+            sell_symbol = sell_pe["symbol"]
+            orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY", "price": buy_pe["ltp"]})
+            orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL", "price": sell_pe["ltp"]})
+            st.write(f"[PAPER] BUY {buy_symbol} @ {buy_pe['ltp']} & SELL {sell_symbol} @ {sell_pe['ltp']}")
 
     # Case 3: New signal (no existing position)
     elif current_signal is None and signal in ["BUY", "SELL"]:
-        if signal == "BUY" and half_pe and atm_pe:
-            buy_symbol = half_pe["symbol"]
-            sell_symbol = atm_pe["symbol"]
-            orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY", "price": half_pe["ltp"]})
-            orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL", "price": atm_pe["ltp"]})
-            st.write(f"[PAPER] BUY {buy_symbol} @ {half_pe['ltp']} & SELL {sell_symbol} @ {atm_pe['ltp']}")
-        elif signal == "SELL" and half_ce and atm_ce:
-            buy_symbol = half_ce["symbol"]
-            sell_symbol = atm_ce["symbol"]
-            orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY", "price": half_ce["ltp"]})
-            orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL", "price": atm_ce["ltp"]})
-            st.write(f"[PAPER] BUY {buy_symbol} @ {half_ce['ltp']} & SELL {sell_symbol} @ {atm_ce['ltp']}")
+        if signal == "BUY" and buy_pe and sell_pe:
+            buy_symbol = buy_pe["symbol"]
+            sell_symbol = sell_pe["symbol"]
+            orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY", "price": buy_pe["ltp"]})
+            orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL", "price": sell_pe["ltp"]})
+            st.write(f"[PAPER] BUY {buy_symbol} @ {buy_pe['ltp']} & SELL {sell_symbol} @ {sell_pe['ltp']}")
+        elif signal == "SELL" and buy_ce and sell_ce:
+            buy_symbol = buy_ce["symbol"]
+            sell_symbol = sell_ce["symbol"]
+            orders.append({"symbol": buy_symbol, "qty": lot, "side": 1, "action": "BUY", "price": buy_ce["ltp"]})
+            orders.append({"symbol": sell_symbol, "qty": lot, "side": -1, "action": "SELL", "price": sell_ce["ltp"]})
+            st.write(f"[PAPER] BUY {buy_symbol} @ {buy_ce['ltp']} & SELL {sell_symbol} @ {sell_ce['ltp']}")
 
     # Case 4: SIDEWAYS (do nothing)
     elif signal == "SIDEWAYS":
@@ -336,6 +355,7 @@ def handle_paper_trade(signal, atm_strike, atm_ce, atm_pe, half_ce, half_pe):
         st.session_state["last_signal"] = signal
 
     return placed_ids
+
 
 def update_paper_positions(trade):
     symbol = trade["symbol"]
@@ -420,7 +440,7 @@ def update_position_prices(cid, token):
             position["current_price"] = ltp
 
 
-def handle_basket_orders_atomic(signal, atm_strike, atm_ce, atm_pe, half_ce, half_pe, fyers):
+def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers):
     orders = []
     lot = 75
     current_signal = st.session_state.get("last_signal")
@@ -451,10 +471,10 @@ def handle_basket_orders_atomic(signal, atm_strike, atm_ce, atm_pe, half_ce, hal
             st.error(f"Failed to exit positions: {e}")
             return []
 
-        # Enter SELL basket (Bullish Call Spread)
-        if half_ce and atm_ce:
+        # Enter SELL basket (Buy CE half-price & Sell CE highest OI-change)
+        if buy_ce and sell_ce:
             orders.append({
-                "symbol": half_ce["symbol"], 
+                "symbol": buy_ce["symbol"], 
                 "qty": lot, 
                 "type": 2, 
                 "side": 1,  # Buy CE
@@ -462,14 +482,14 @@ def handle_basket_orders_atomic(signal, atm_strike, atm_ce, atm_pe, half_ce, hal
                 "validity": "DAY"
             })
             orders.append({
-                "symbol": atm_ce["symbol"], 
+                "symbol": sell_ce["symbol"], 
                 "qty": lot, 
                 "type": 2, 
                 "side": -1,  # Sell CE
                 "productType": "MARGIN",
                 "validity": "DAY"
             })
-            st.write(f"[LIVE] BUY {half_ce['symbol']} & SELL {atm_ce['symbol']}")
+            st.write(f"[LIVE] BUY {buy_ce['symbol']} & SELL {sell_ce['symbol']}")
 
     # Case 2: SELL → BUY (Exit SELL, Enter BUY)
     elif current_signal == "SELL" and signal == "BUY":
@@ -492,10 +512,10 @@ def handle_basket_orders_atomic(signal, atm_strike, atm_ce, atm_pe, half_ce, hal
             st.error(f"Failed to exit positions: {e}")
             return []
 
-        # Enter BUY basket (Bearish Put Spread)
-        if half_pe and atm_pe:
+        # Enter BUY basket (Buy PE half-price & Sell PE highest OI-change)
+        if buy_pe and sell_pe:
             orders.append({
-                "symbol": half_pe["symbol"], 
+                "symbol": buy_pe["symbol"], 
                 "qty": lot, 
                 "type": 2, 
                 "side": 1,  # Buy PE
@@ -503,20 +523,20 @@ def handle_basket_orders_atomic(signal, atm_strike, atm_ce, atm_pe, half_ce, hal
                 "validity": "DAY"
             })
             orders.append({
-                "symbol": atm_pe["symbol"], 
+                "symbol": sell_pe["symbol"], 
                 "qty": lot, 
                 "type": 2, 
                 "side": -1,  # Sell PE
                 "productType": "MARGIN",
                 "validity": "DAY"
             })
-            st.write(f"[LIVE] BUY {half_pe['symbol']} & SELL {atm_pe['symbol']}")
+            st.write(f"[LIVE] BUY {buy_pe['symbol']} & SELL {sell_pe['symbol']}")
 
     # Case 3: New signal (no existing position)
     elif current_signal is None and signal in ["BUY", "SELL"]:
-        if signal == "BUY" and half_pe and atm_pe:
+        if signal == "BUY" and buy_pe and sell_pe:
             orders.append({
-                "symbol": half_pe["symbol"], 
+                "symbol": buy_pe["symbol"], 
                 "qty": lot, 
                 "type": 2, 
                 "side": 1,  # Buy PE
@@ -524,17 +544,17 @@ def handle_basket_orders_atomic(signal, atm_strike, atm_ce, atm_pe, half_ce, hal
                 "validity": "DAY"
             })
             orders.append({
-                "symbol": atm_pe["symbol"], 
+                "symbol": sell_pe["symbol"], 
                 "qty": lot, 
                 "type": 2, 
                 "side": -1,  # Sell PE
                 "productType": "MARGIN",
                 "validity": "DAY"
             })
-            st.write(f"[LIVE] BUY {half_pe['symbol']} & SELL {atm_pe['symbol']}")
-        elif signal == "SELL" and half_ce and atm_ce:
+            st.write(f"[LIVE] BUY {buy_pe['symbol']} & SELL {sell_pe['symbol']}")
+        elif signal == "SELL" and buy_ce and sell_ce:
             orders.append({
-                "symbol": half_ce["symbol"], 
+                "symbol": buy_ce["symbol"], 
                 "qty": lot, 
                 "type": 2, 
                 "side": 1,  # Buy CE
@@ -542,14 +562,14 @@ def handle_basket_orders_atomic(signal, atm_strike, atm_ce, atm_pe, half_ce, hal
                 "validity": "DAY"
             })
             orders.append({
-                "symbol": atm_ce["symbol"], 
+                "symbol": sell_ce["symbol"], 
                 "qty": lot, 
                 "type": 2, 
                 "side": -1,  # Sell CE
                 "productType": "MARGIN",
                 "validity": "DAY"
             })
-            st.write(f"[LIVE] BUY {half_ce['symbol']} & SELL {atm_ce['symbol']}")
+            st.write(f"[LIVE] BUY {buy_ce['symbol']} & SELL {sell_ce['symbol']}")
 
     # Case 4: SIDEWAYS (do nothing)
     elif signal == "SIDEWAYS":
@@ -577,27 +597,37 @@ def handle_basket_orders_atomic(signal, atm_strike, atm_ce, atm_pe, half_ce, hal
 
 
 def format_and_show(chain, title, ltp, show_signals=False):
-    df=pd.DataFrame(chain)
+    df = pd.DataFrame(chain)
     if df.empty:
         st.info(f"No data for {title}")
         return None
-    ce=df[df["option_type"]=="CE"]
-    pe=df[df["option_type"]=="PE"]
-    cols=["symbol","strike_price","oi","volume","ltp","ask","bid","ltpch","ltpchp","oich","oichp","prev_oi"]
-    ce_df=ce[cols].rename(columns={"strike_price":"Strike","oi":"OI","volume":"Vol","ltpch":"LTPCh","ltpchp":"LTPChP","oich":"OICh","oichp":"OIChP","prev_oi":"PrevOI"})
-    pe_df=pe[cols].rename(columns={"strike_price":"Strike","oi":"OI","volume":"Vol","ltpch":"LTPCh","ltpchp":"LTPChP","oich":"OICh","oichp":"OIChP","prev_oi":"PrevOI"})
-    merged=pd.merge(ce_df.add_prefix("CE_"),pe_df.add_prefix("PE_"),left_on="CE_Strike",right_on="PE_Strike",how="outer").rename(columns={"CE_Strike":"Strike"}).drop("PE_Strike",axis=1)
-    atm=None
-    if ltp is not None:
-        atm=min(merged["Strike"].dropna(),key=lambda x:abs(x-ltp))
+    ce = df[df["option_type"] == "CE"]
+    pe = df[df["option_type"] == "PE"]
+    cols = ["symbol", "strike_price", "oi", "volume", "ltp", "ask", "bid", "ltpch", "ltpchp", "oich", "oichp", "prev_oi"]
+    ce_df = ce[cols].rename(columns={"strike_price": "Strike", "oi": "OI", "volume": "Vol", "ltpch": "LTPCh", "ltpchp": "LTPChP", "oich": "OICh", "oichp": "OIChP", "prev_oi": "PrevOI"})
+    pe_df = pe[cols].rename(columns={"strike_price": "Strike", "oi": "OI", "volume": "Vol", "ltpch": "LTPCh", "ltpchp": "LTPChP", "oich": "OICh", "oichp": "OIChP", "prev_oi": "PrevOI"})
+    merged = pd.merge(
+        ce_df.add_prefix("CE_"),
+        pe_df.add_prefix("PE_"),
+        left_on="CE_Strike", right_on="PE_Strike",
+        how="outer"
+    ).rename(columns={"CE_Strike": "Strike"}).drop("PE_Strike", axis=1)
+    atm = None
+    if ltp is not None and not merged["Strike"].dropna().empty:
+        atm = min(merged["Strike"].dropna(), key=lambda x: abs(x - ltp))
     st.subheader(title)
     if show_signals and atm is not None:
         signal = compute_signals(merged, atm)
         st.metric("PCR Signal", signal)  # Show just the PCR signal
-    styled=merged.style.apply(lambda row:["background:yellow" if row["Strike"]==atm else "" for _ in row],axis=1)
+    styled = merged.style.apply(
+        lambda row: ["background:yellow" if row["Strike"] == atm else "" for _ in row],
+        axis=1
+    )
     st.dataframe(styled)
     st.caption(f"ATM: {atm} • LTP: {ltp}")
-    return signal
+    if show_signals and atm is not None:
+        return signal
+    return None
 
 
 def show_paper_trading_page(cid, token):
@@ -612,10 +642,6 @@ def show_paper_trading_page(cid, token):
     total_pnl = st.session_state.paper_pnl['realized'] + st.session_state.paper_pnl['unrealized']
     col3.metric("💵 Total PnL", f"₹{total_pnl:.2f}", delta=f"{total_pnl:.2f}")
     
-    # Show last update time
-    # update_time = st.session_state.pnl_update_time.strftime("%Y-%m-%d %H:%M:%S")
-    # st.caption(f"Last updated: {update_time}")
-
     ist = pytz.timezone("Asia/Kolkata")
     st.write(f"🕒 Updated: {datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S')}")
     
@@ -751,7 +777,7 @@ def main():
     
     # Main trading page
     st.subheader("📈 Live Trading")
-    if not(cid and token and sym): 
+    if not (cid and token and sym):
         st.info("Enter credentials in the sidebar.")
         return
     
@@ -764,7 +790,7 @@ def main():
         st.error("Failed to fetch expiry data")
         return
     
-    exp = sorted([(e["date"], e.get("expiry")) for e in meta["data"]["expiryData"]], 
+    exp = sorted([(e["date"], e.get("expiry")) for e in meta["data"]["expiryData"]],
                  key=lambda x: datetime.strptime(x[0], "%d-%m-%Y"))
     today = datetime.today().date()
     dates = [datetime.strptime(d, "%d-%m-%Y").date() for d, _ in exp]
@@ -780,12 +806,15 @@ def main():
     
     chain = get_option_chain_data(cid, token, sym, expiry_ts=curr_ts)
     if chain:
+        # Display the option chain and PCR signal
         signal = format_and_show(chain, f"Current Expiry: {curr_date}", ltp, show_signals=True)
-        strike, atm_ce, atm_pe, half_ce, half_pe, _ = get_atm_and_half_price_option(chain, ltp)
         
-        # Check if we have valid option data
-        valid_buy = half_pe is not None and atm_pe is not None
-        valid_sell = half_ce is not None and atm_ce is not None
+        # Select strikes based on highest OI change and half-price logic
+        sell_pe, buy_pe, sell_ce, buy_ce = select_strikes_based_on_oi(chain)
+        
+        # Validate that we have valid pairs for BUY or SELL
+        valid_buy = (sell_pe is not None and buy_pe is not None)
+        valid_sell = (sell_ce is not None and buy_ce is not None)
         
         if signal == "BUY" and not valid_buy:
             st.warning("Missing option data for BUY signal. Unable to place trade.")
@@ -794,35 +823,33 @@ def main():
         elif signal in ("BUY", "SELL"):
             # PAPER TRADE: Execute immediately if paper trading is enabled
             if paper_trade:
-                # Always attempt to execute paper trade when signal is generated
                 st.write(f"📢 Signal detected: {signal} - Attempting paper trade")
-                ids = handle_paper_trade(signal, strike, atm_ce, atm_pe, half_ce, half_pe)
+                ids = handle_paper_trade(signal, sell_pe, buy_pe, sell_ce, buy_ce)
                 st.session_state["last_signal_order_ids"] = ids
             
             # REAL TRADE: Only execute if auto trade is enabled
             elif auto_trade:
-                # Handle real trading
                 if st.session_state["last_signal"] == signal and has_open_orders_for_last_signal(fy):
                     st.info(f"Basket for {signal} already open.")
                 else:
-                    ids = handle_basket_orders_atomic(signal, strike, atm_ce, atm_pe, half_ce, half_pe, fy)
+                    ids = handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fy)
                     st.session_state["last_signal"] = signal
                     st.session_state["last_signal_order_ids"] = ids
             else:
                 st.info(f"Auto trade disabled; signal: {signal}.")
         elif signal == "SIDEWAYS":
             if paper_trade:
-                handle_paper_trade(signal, strike, atm_ce, atm_pe, half_ce, half_pe)
+                handle_paper_trade(signal, sell_pe, buy_pe, sell_ce, buy_ce)
             elif auto_trade:
-                handle_basket_orders_atomic(signal, strike, atm_ce, atm_pe, half_ce, half_pe, fy)
+                handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fy)
             else:
                 st.info("Auto trade disabled; sideways.")
-        else: 
+        else:
             st.info("No action.")
     
     time.sleep(60)
     st.rerun()
 
-if __name__=="__main__":
+if __name__ == "__main__":
     logging.basicConfig(filename="trading_debug.log", level=logging.INFO, format="%(asctime)s - %(message)s")
     main()
