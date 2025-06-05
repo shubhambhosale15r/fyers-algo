@@ -788,7 +788,7 @@ def update_all_data(cid, token, sym, paper_trade_enabled):
 def main():
     # --- GLOBAL REFRESH: refresh everything every 60 seconds ---
     refresh_interval = 60  # in seconds
-    st_autorefresh(interval=refresh_interval_ms*1000, key="global_refresh")
+    st_autorefresh(interval=refresh_interval *1000, key="global_refresh")
     st.title("Fyers Algo Trading")
     
     # Initialize session state
