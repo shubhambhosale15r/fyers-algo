@@ -898,8 +898,8 @@ def main():
         else:
             st.info("No action.")
     
-    # time.sleep(60)
-    # st.rerun()
+    time.sleep(60)
+    st.rerun()
 
 if __name__ == "__main__":
     logging.basicConfig(filename="trading_debug.log", level=logging.INFO, format="%(asctime)s - %(message)s")
