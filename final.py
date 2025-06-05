@@ -786,8 +786,11 @@ def update_all_data(cid, token, sym, paper_trade_enabled):
 
 
 def main():
+    # --- GLOBAL REFRESH: refresh everything every 60 seconds ---
+    refresh_interval = 60  # in seconds
+    st_autorefresh(interval=refresh_interval_ms*1000, key="global_refresh")
     st.title("Fyers Algo Trading")
-
+    
     # Initialize session state
     if "cid" not in st.session_state:
         st.session_state.cid = ""
@@ -833,9 +836,7 @@ def main():
     if "page" not in st.session_state:
         st.session_state.page = "trading"
 
-    # --- GLOBAL REFRESH: refresh everything every 60 seconds ---
-    refresh_interval = 60  # in seconds
-    st_autorefresh(interval=refresh_interval_ms*1000, key="global_refresh")
+
 
     # Return early if no credentials/symbol
     if not (cid and token and sym):
