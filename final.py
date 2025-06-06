@@ -252,8 +252,10 @@ def has_open_orders_for_last_signal(fyers):
         return False
     try:
         ob = fyers.orderbook().get("orderBook", [])
-        return any(o.get("id") in ids and o.get("status") in [4,6] for o in ob)
-    except:
+        # Status 2 means "open/pending"
+        return any(o.get("id") in ids and o.get("status") == 2 for o in ob)
+    except Exception as e:
+        st.warning(f"Could not check open orders: {e}")
         return False
 
 
