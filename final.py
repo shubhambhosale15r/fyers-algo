@@ -38,6 +38,16 @@ if "paper_trade_active" not in st.session_state:
 if "pnl_update_time" not in st.session_state:
     st.session_state.pnl_update_time = datetime.now()
 
+# for signal tracking separation!
+if "paper_last_signal" not in st.session_state:
+    st.session_state["paper_last_signal"] = None
+if "paper_last_signal_order_ids" not in st.session_state:
+    st.session_state["paper_last_signal_order_ids"] = []
+if "live_last_signal" not in st.session_state:
+    st.session_state["live_last_signal"] = None
+if "live_last_signal_order_ids" not in st.session_state:
+    st.session_state["live_last_signal_order_ids"] = []
+
 def enforce_rate_limit():
     now = datetime.now()
     window = now - st.session_state["api_window_start"]
@@ -46,7 +56,7 @@ def enforce_rate_limit():
         st.session_state["api_window_start"] = now
         st.session_state["option_chain_api_count"] = 0
         st.session_state["quote_api_count"] = 0
-    elif total_calls >= 500:
+    elif total_calls >= 200:
         wait = 60 - window.seconds
         st.warning(f"Approaching rate limit, waiting {wait}s...")
         time.sleep(wait)
@@ -247,7 +257,7 @@ def place_order_and_check(fyers, order):
 
 
 def has_open_orders_for_last_signal(fyers):
-    ids = st.session_state.get("last_signal_order_ids", [])
+    ids = st.session_state.get("live_last_signal_order_ids", [])
     if not ids:
         return False
     try:
@@ -263,7 +273,7 @@ def handle_paper_trade(signal, sell_pe, buy_pe, sell_ce, buy_ce):
     orders = []
     lot = 75
     timestamp = datetime.now(pytz.timezone('Asia/Kolkata')).strftime("%Y-%m-%d %H:%M:%S")
-    current_signal = st.session_state.get("last_signal")
+    current_signal = st.session_state.get("paper_last_signal")
 
     # Skip if signal is the same as last time (no duplicate orders)
     if current_signal == signal:
@@ -355,7 +365,7 @@ def handle_paper_trade(signal, sell_pe, buy_pe, sell_ce, buy_ce):
 
     # Update last_signal if new positions opened
     if placed_ids and signal in ["BUY", "SELL"]:
-        st.session_state["last_signal"] = signal
+        st.session_state["paper_last_signal"] = signal
 
     return placed_ids
 
@@ -897,14 +907,14 @@ def main():
             if paper_trade:
                 st.write(f"📢 Signal detected: {signal} - Attempting paper trade")
                 ids = handle_paper_trade(signal, sell_pe, buy_pe, sell_ce, buy_ce)
-                st.session_state["last_signal_order_ids"] = ids
+                st.session_state["paper_last_signal_order_ids"] = ids
             elif auto_trade:
                 if st.session_state.get("last_signal") == signal and has_open_orders_for_last_signal(fy):
                     st.info(f"Basket for {signal} already open.")
                 else:
                     ids = handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fy)
-                    st.session_state["last_signal"] = signal
-                    st.session_state["last_signal_order_ids"] = ids
+                    st.session_state["live_last_signal"] = signal
+                    st.session_state["live_last_signal_order_ids"] = ids
             else:
                 st.info(f"Auto trade disabled; signal: {signal}.")
         elif signal == "SIDEWAYS":
