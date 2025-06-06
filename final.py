@@ -894,6 +894,9 @@ def main():
                 ids = handle_paper_trade(signal, sell_pe, buy_pe, sell_ce, buy_ce)
                 st.session_state["last_signal_order_ids"] = ids
             elif auto_trade:
+                
+                fy = fyersModel.FyersModel(client_id=cid, token=token, is_async=False, log_path="")
+
                 if st.session_state.get("last_signal") == signal and has_open_orders_for_last_signal(fy):
                     st.info(f"Basket for {signal} already open.")
                 else:
