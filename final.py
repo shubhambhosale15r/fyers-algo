@@ -836,8 +836,6 @@ def main():
     if "page" not in st.session_state:
         st.session_state.page = "trading"
 
-
-
     # Return early if no credentials/symbol
     if not (cid and token and sym):
         st.info("Enter credentials in the sidebar.")
@@ -884,6 +882,11 @@ def main():
         valid_buy = (sell_pe is not None and buy_pe is not None)
         valid_sell = (sell_ce is not None and buy_ce is not None)
 
+        # ---- LIVE FYERS INIT (needed for all auto_trade branches) ----
+        fy = None
+        if auto_trade:
+            fy = fyersModel.FyersModel(client_id=cid, token=token, is_async=False, log_path="")
+
         if signal == "BUY" and not valid_buy:
             st.warning("Missing option data for BUY signal. Unable to place trade.")
         elif signal == "SELL" and not valid_sell:
@@ -894,9 +897,6 @@ def main():
                 ids = handle_paper_trade(signal, sell_pe, buy_pe, sell_ce, buy_ce)
                 st.session_state["last_signal_order_ids"] = ids
             elif auto_trade:
-                
-                fy = fyersModel.FyersModel(client_id=cid, token=token, is_async=False, log_path="")
-
                 if st.session_state.get("last_signal") == signal and has_open_orders_for_last_signal(fy):
                     st.info(f"Basket for {signal} already open.")
                 else:
@@ -914,7 +914,6 @@ def main():
                 st.info("Auto trade disabled; sideways.")
         else:
             st.info("No action.")
-
 
 
 if __name__ == "__main__":
