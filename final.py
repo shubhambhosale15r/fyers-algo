@@ -276,7 +276,7 @@ def handle_paper_trade(signal, sell_pe, buy_pe, sell_ce, buy_ce):
     current_signal = st.session_state.get("paper_last_signal")
 
     # Skip if signal is the same as last time (no duplicate orders)
-    if current_signal == signal:
+    if current_signal == signal and st.session_state.paper_positions:
         st.write(f"[PAPER] Signal {signal} is already active. No new trades.")
         return []
 
@@ -909,7 +909,7 @@ def main():
                 ids = handle_paper_trade(signal, sell_pe, buy_pe, sell_ce, buy_ce)
                 st.session_state["paper_last_signal_order_ids"] = ids
             elif auto_trade:
-                if st.session_state.get("last_signal") == signal and has_open_orders_for_last_signal(fy):
+                if st.session_state.get("live_last_signal") == signal and has_open_orders_for_last_signal(fy):
                     st.info(f"Basket for {signal} already open.")
                 else:
                     ids = handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fy)
