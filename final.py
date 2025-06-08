@@ -153,8 +153,8 @@ def compute_signals(merged_df, atm_strike):
             signal = "SIDEWAYS"
         st.write(f"ITM PCR: {itm_pcr:.4f} (PE OI: {itm_pe_oi}, CE OI: {itm_ce_oi})")
         st.write(f"OTM PCR: {otm_pcr:.4f} (PE OI: {otm_pe_oi}, CE OI: {otm_ce_oi})")
-        st.write(f"ITM PCR Volume: {itm_volume_pcr:.4f} (PE OI: {itm_pe_volume}, CE OI: {itm_ce_volume})")
-        st.write(f"OTM PCR Volume: {otm_volume_pcr:.4f} (PE OI: {otm_pe_volume}, CE OI: {otm_ce_volume})")
+        st.write(f"ITM PCR Volume: {itm_volume_pcr:.4f} (PE ITM Volume: {itm_pe_volume}, CE ITM Volume: {itm_ce_volume})")
+        st.write(f"OTM PCR Volume: {otm_volume_pcr:.4f} (PE OTM Volume: {otm_pe_volume}, CE OTM Volume: {otm_ce_volume})")
     else:
         if itm_pe_oi < 0 and itm_ce_oi > 0 and otm_pe_oi > 0 and otm_pe_oi > otm_ce_oi and itm_volume_pcr < 0.8 and otm_volume_pcr > 1.2:
             signal = "BUY"
@@ -164,8 +164,8 @@ def compute_signals(merged_df, atm_strike):
             signal = "SIDEWAYS"
         st.write(f"ITM :  PE OI: {itm_pe_oi}, CE OI: {itm_ce_oi}")
         st.write(f"OTM :  PE OI: {otm_pe_oi}, CE OI: {otm_ce_oi}")
-        st.write(f"ITM PCR Volume: {itm_volume_pcr:.4f} (PE OI: {itm_pe_volume}, CE OI: {itm_ce_volume})")
-        st.write(f"OTM PCR Volume: {otm_volume_pcr:.4f} (PE OI: {otm_pe_volume}, CE OI: {otm_ce_volume})")
+        st.write(f"ITM PCR Volume: {itm_volume_pcr:.4f} (PE ITM Volume: {itm_pe_volume}, CE ITM Volume: {itm_ce_volume})")
+        st.write(f"OTM PCR Volume: {otm_volume_pcr:.4f} (PE OTM Volume: {otm_pe_volume}, CE OTM Volume: {otm_ce_volume})")
         if otm_pe_oi > otm_ce_oi:
             st.write("50% more otm pe compared to ce")
         elif otm_ce_oi >  otm_pe_oi:
