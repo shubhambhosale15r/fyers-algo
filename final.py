@@ -862,7 +862,7 @@ def main():
         qc = st.session_state.get("quote_api_count", 0)
         st.write(f"Option Chain API: {oc}")
         st.write(f"Quote API: {qc}")
-        st.write(f"Total: {oc + qc}/500 per minute")
+        st.write(f"Total: {oc + qc}/200 per minute")
 
     # Initialize page state
     if "page" not in st.session_state:
