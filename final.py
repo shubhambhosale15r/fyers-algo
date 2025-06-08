@@ -125,36 +125,54 @@ def compute_signals(merged_df, atm_strike):
     # Compute PCR OI for ITM and OTM
     itm_pe_oi = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OICh"].sum()
     itm_ce_oi = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OICh"].sum()
-    otm_pe_oi = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_OICh"].sum()
-    otm_ce_oi = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OICh"].sum()
+    # otm_pe_oi = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_OICh"].sum()
+    # otm_ce_oi = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OICh"].sum()
 
+    # compute pcr price
+    itm_pe_price=merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
+    itm_ce_price=merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
+
+    # itm price pcr
+    itm_price_pcr = itm_pe_price / itm_ce_price
+
+    # compute pcr volume
+    itm_pe_volume=merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_Vol"].sum()
+    itm_ce_volume=merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_Vol"].sum()
+
+    # itm volume pcr
+    itm_volume_pcr = itm_pe_volume / itm_ce_volume
+    
     # Avoid division by zero
-    if itm_pe_oi > 0 and itm_ce_oi > 0 and otm_pe_oi > 0 and otm_ce_oi > 0:
+    if itm_pe_oi > 0 and itm_ce_oi > 0 :#and otm_pe_oi > 0 and otm_ce_oi > 0:
         itm_pcr = itm_pe_oi / itm_ce_oi 
-        otm_pcr = otm_pe_oi / otm_ce_oi 
+        # otm_pcr = otm_pe_oi / otm_ce_oi 
 
         # Generate signals based on PCR values
-        if itm_pcr < 0.8 and otm_pcr > 1.2:
+        if itm_pcr < 0.8 and itm_price_pcr < 0.8 and itm_volume_pcr < 0.8 :#and otm_pcr > 1.2:
             signal = "BUY"
-        elif itm_pcr > 1.2 and otm_pcr < 0.8:
+        elif itm_pcr > 1.2 and itm_price_pcr > 1.2 and itm_volume_pcr > 1.2 :#and otm_pcr < 0.8:
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
-        st.write(f"ITM PCR: {itm_pcr:.4f} (PE OI: {itm_pe_oi}, CE OI: {itm_ce_oi})")
-        st.write(f"OTM PCR: {otm_pcr:.4f} (PE OI: {otm_pe_oi}, CE OI: {otm_ce_oi})")
+        st.write(f"ITM PCR OI: {itm_pcr:.4f} (PE OI: {itm_pe_oi}, CE OI: {itm_ce_oi})")
+        st.write(f"ITM PCR Price: {itm_price_pcr:.4f} (PE Price: {itm_pe_price}, CE Price: {itm_ce_price})")
+        st.write(f"ITM PCR Volume: {itm_volume_pcr:.4f} (PE Volume: {itm_pe_volume}, CE Volume: {itm_ce_volume})")
+        # st.write(f"OTM PCR: {otm_pcr:.4f} (PE OI: {otm_pe_oi}, CE OI: {otm_ce_oi})")
     else:
-        if itm_pe_oi < 0 and itm_ce_oi > 0 and otm_pe_oi > 0 and otm_pe_oi > 1.5 * otm_ce_oi or otm_ce_oi < 0:
+        if itm_pe_oi < 0 and itm_ce_oi > 0 and itm_price_pcr < 0.8 and itm_volume_pcr < 0.8:#and otm_pe_oi > 0 and otm_pe_oi > 1.5 * otm_ce_oi or otm_ce_oi < 0:
             signal = "BUY"
-        elif itm_pe_oi > 0 and itm_ce_oi < 0 and otm_ce_oi > 0 and otm_ce_oi > 1.5 * otm_pe_oi or otm_pe_oi < 0:
+        elif itm_pe_oi > 0 and itm_ce_oi < 0 and itm_price_pcr > 1.2 and itm_volume_pcr > 1.2 :#and otm_ce_oi > 0 and otm_ce_oi > 1.5 * otm_pe_oi or otm_pe_oi < 0:
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
         st.write(f"ITM :  PE OI: {itm_pe_oi}, CE OI: {itm_ce_oi}")
-        st.write(f"OTM :  PE OI: {otm_pe_oi}, CE OI: {otm_ce_oi}")
-        if otm_pe_oi > 1.5 * otm_ce_oi:
-            st.write("50% more otm pe compared to ce")
-        elif otm_ce_oi > 1.5 * otm_pe_oi:
-            st.write("50% more otm ce compared to pe")
+        st.write(f"ITM PCR Price: {itm_price_pcr:.4f} (PE Price: {itm_pe_price}, CE Price: {itm_ce_price})")
+        st.write(f"ITM PCR Volume: {itm_volume_pcr:.4f} (PE Volume: {itm_pe_volume}, CE Volume: {itm_ce_volume})")
+        # st.write(f"OTM :  PE OI: {otm_pe_oi}, CE OI: {otm_ce_oi}")
+        # if otm_pe_oi > 1.5 * otm_ce_oi:
+        #     st.write("50% more otm pe compared to ce")
+        # elif otm_ce_oi > 1.5 * otm_pe_oi:
+        #     st.write("50% more otm ce compared to pe")
 
     return signal
 
