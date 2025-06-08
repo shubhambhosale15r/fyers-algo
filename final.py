@@ -848,8 +848,10 @@ def main():
         st.subheader("🔐 API Credentials")
         cid = st.text_input("Client ID", value=st.session_state.cid)
         token = st.text_input("Access Token", type="password", value=st.session_state.token)
-        sym = st.text_input("Symbol (e.g. NSE:NIFTY50-INDEX)", "NSE:NIFTY50-INDEX")
-
+        # sym = st.text_input("Symbol (e.g. NSE:NIFTY50-INDEX)", "NSE:NIFTY50-INDEX")
+        sym=st.selectbox('Choose Index: ',['NSE:NIFTY50-INDEX', 'BSE:SENSEX-INDEX'])
+        st.write(f'You selected: {sym}')
+        
         # Store credentials
         st.session_state.cid = cid
         st.session_state.token = token
