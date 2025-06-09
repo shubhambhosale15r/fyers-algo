@@ -149,8 +149,8 @@ def compute_signals(merged_df, atm_strike):
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
-        st.write(f"ITM PCR OI Chng: {itm_pcr_chng:.4f} (PE OI Chng: {itm_pe_oi_chng}, CE OI: {itm_ce_oi_chng})")
-        st.write(f"OTM PCR OI Chng: {otm_pcr_chng:.4f} (PE OI Chng: {otm_pe_oi_chng}, CE OI: {otm_ce_oi_chng})")
+        st.write(f"ITM PCR OI Chng: {itm_pcr_chng:.4f} (PE OI Chng: {itm_pe_oi_chng}, CE OI Chng: {itm_ce_oi_chng})")
+        st.write(f"OTM PCR OI Chng: {otm_pcr_chng:.4f} (PE OI Chng: {otm_pe_oi_chng}, CE OI Chng: {otm_ce_oi_chng})")
         st.write(f"ITM PCR OI: {itm_pcr:.4f} (PE ITM OI: {itm_pe_oi}, CE ITM OI: {itm_ce_oi})")
         st.write(f"OTM PCR OI: {otm_pcr:.4f} (PE OTM OI: {otm_pe_oi}, CE OTM OI: {otm_ce_oi})")
     else:
@@ -160,8 +160,8 @@ def compute_signals(merged_df, atm_strike):
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
-        st.write(f"ITM PCR OI Chng: {itm_pcr_chng:.4f} (PE OI Chng: {itm_pe_oi_chng}, CE OI: {itm_ce_oi_chng})")
-        st.write(f"OTM PCR OI Chng: {otm_pcr_chng:.4f} (PE OI Chng: {otm_pe_oi_chng}, CE OI: {otm_ce_oi_chng})")
+        st.write(f"ITM PCR OI Chng: {itm_pcr_chng:.4f} (PE OI Chng: {itm_pe_oi_chng}, CE OI Chng: {itm_ce_oi_chng})")
+        st.write(f"OTM PCR OI Chng: {otm_pcr_chng:.4f} (PE OI Chng: {otm_pe_oi_chng}, CE OI Chng: {otm_ce_oi_chng})")
         st.write(f"ITM PCR OI: {itm_pcr:.4f} (PE ITM OI: {itm_pe_oi}, CE ITM OI: {itm_ce_oi})")
         st.write(f"OTM PCR OI: {otm_pcr:.4f} (PE OTM OI: {otm_pe_oi}, CE OTM OI: {otm_ce_oi})")
         # if otm_pe_oi > otm_ce_oi:
