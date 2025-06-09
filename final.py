@@ -145,9 +145,9 @@ def compute_signals(merged_df, atm_strike):
         otm_pcr = otm_pe_oi / otm_ce_oi 
 
         # Generate signals based on PCR values
-        if itm_pcr < 0.8 and otm_pcr > 1.2 and itm_volume_pcr < 0.8 and otm_volume_pcr > 1.2:
+        if itm_pcr < 0.8 and otm_pcr > 1.2 and itm_volume_pcr < 1 and otm_volume_pcr > 1:
             signal = "BUY"
-        elif itm_pcr > 1.2 and otm_pcr < 0.8 and itm_volume_pcr > 1.2 and otm_volume_pcr < 0.8:
+        elif itm_pcr > 1.2 and otm_pcr < 0.8 and itm_volume_pcr > 1 and otm_volume_pcr < 1:
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
@@ -156,9 +156,9 @@ def compute_signals(merged_df, atm_strike):
         st.write(f"ITM PCR Volume: {itm_volume_pcr:.4f} (PE ITM Volume: {itm_pe_volume}, CE ITM Volume: {itm_ce_volume})")
         st.write(f"OTM PCR Volume: {otm_volume_pcr:.4f} (PE OTM Volume: {otm_pe_volume}, CE OTM Volume: {otm_ce_volume})")
     else:
-        if itm_pe_oi < 0 and itm_ce_oi > 0 and otm_pe_oi > 0 and otm_pe_oi > otm_ce_oi and itm_volume_pcr < 0.8 and otm_volume_pcr > 1.2:
+        if itm_pe_oi < 0 and itm_ce_oi > 0 and otm_pe_oi > 0 and otm_pe_oi > otm_ce_oi and itm_volume_pcr < 1 and otm_volume_pcr > 1:
             signal = "BUY"
-        elif itm_pe_oi > 0 and itm_ce_oi < 0 and otm_ce_oi > 0 and otm_ce_oi > otm_pe_oi and itm_volume_pcr > 1.2 and otm_volume_pcr < 0.8:
+        elif itm_pe_oi > 0 and itm_ce_oi < 0 and otm_ce_oi > 0 and otm_ce_oi > otm_pe_oi and itm_volume_pcr > 1 and otm_volume_pcr < 1:
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
@@ -167,9 +167,9 @@ def compute_signals(merged_df, atm_strike):
         st.write(f"ITM PCR Volume: {itm_volume_pcr:.4f} (PE ITM Volume: {itm_pe_volume}, CE ITM Volume: {itm_ce_volume})")
         st.write(f"OTM PCR Volume: {otm_volume_pcr:.4f} (PE OTM Volume: {otm_pe_volume}, CE OTM Volume: {otm_ce_volume})")
         if otm_pe_oi > otm_ce_oi:
-            st.write("50% more otm pe compared to ce")
+            st.write(" more otm pe compared to ce")
         elif otm_ce_oi >  otm_pe_oi:
-            st.write("50% more otm ce compared to pe")
+            st.write(" more otm ce compared to pe")
 
     return signal
 
