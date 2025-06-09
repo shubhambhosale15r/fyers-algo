@@ -129,41 +129,41 @@ def compute_signals(merged_df, atm_strike):
     otm_ce_oi_chng = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OICh"].sum()
 
     # Compute PCR OI for ITM and OTM
-    itm_pe_oi = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OI"].sum()
-    itm_ce_oi = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OI"].sum()
-    otm_pe_oi = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_OI"].sum()
-    otm_ce_oi = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OI"].sum()
+    # itm_pe_oi = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OI"].sum()
+    # itm_ce_oi = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OI"].sum()
+    # otm_pe_oi = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_OI"].sum()
+    # otm_ce_oi = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OI"].sum()
 
     # Avoid division by zero
-    if itm_pe_oi_chng > 0 and itm_ce_oi_chng > 0 and otm_pe_oi_chng > 0 and otm_ce_oi_chng > 0 and itm_pe_oi>0 and itm_ce_oi>0 and otm_pe_oi>0 and otm_ce_oi>0:
+    if itm_pe_oi_chng > 0 and itm_ce_oi_chng > 0 and otm_pe_oi_chng > 0 and otm_ce_oi_chng > 0 :
         itm_pcr_chng = itm_pe_oi_chng / itm_ce_oi_chng 
         otm_pcr_chng = otm_pe_oi_chng  / otm_ce_oi_chng  
 
-        itm_pcr = itm_pe_oi / itm_ce_oi
-        otm_pcr = otm_pe_oi / otm_ce_oi
+        # itm_pcr = itm_pe_oi / itm_ce_oi
+        # otm_pcr = otm_pe_oi / otm_ce_oi
 
         # Generate signals based on PCR values
-        if itm_pcr_chng < 0.8 and otm_pcr_chng > 1.2 and itm_pcr < 1 and otm_pcr > 1:
+        if itm_pcr_chng < 0.8 and otm_pcr_chng > 1.2 :
             signal = "BUY"
-        elif itm_pcr_chng > 1.2 and otm_pcr_chng < 0.8 and itm_pcr > 1 and otm_pcr < 1:
+        elif itm_pcr_chng > 1.2 and otm_pcr_chng < 0.8 :
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
         st.write(f"ITM PCR OI Chng: {itm_pcr_chng:.4f} (PE ITM OI Chng: {itm_pe_oi_chng}, CE ITM OI Chng: {itm_ce_oi_chng})")
         st.write(f"OTM PCR OI Chng: {otm_pcr_chng:.4f} (PE OTM OI Chng: {otm_pe_oi_chng}, CE OTM OI Chng: {otm_ce_oi_chng})")
-        st.write(f"ITM PCR OI: {itm_pcr:.4f} (PE ITM OI: {itm_pe_oi}, CE ITM OI: {itm_ce_oi})")
-        st.write(f"OTM PCR OI: {otm_pcr:.4f} (PE OTM OI: {otm_pe_oi}, CE OTM OI: {otm_ce_oi})")
+        # st.write(f"ITM PCR OI: {itm_pcr:.4f} (PE ITM OI: {itm_pe_oi}, CE ITM OI: {itm_ce_oi})")
+        # st.write(f"OTM PCR OI: {otm_pcr:.4f} (PE OTM OI: {otm_pe_oi}, CE OTM OI: {otm_ce_oi})")
     else:
-        if itm_pe_oi_chng < 0 and itm_ce_oi_chng > 0 and otm_pe_oi_chng > 0 and otm_pe_oi_chng > otm_ce_oi_chng and itm_pcr < 1 and otm_pcr > 1:
+        if itm_pe_oi_chng < 0 and itm_ce_oi_chng > 0 and otm_pe_oi_chng > 0 and otm_pe_oi_chng > otm_ce_oi_chng :
             signal = "BUY"
-        elif itm_pe_oi_chng > 0 and itm_ce_oi_chng < 0 and otm_ce_oi_chng > 0 and otm_ce_oi_chng > otm_pe_oi_chng and itm_pcr > 1 and otm_pcr < 1:
+        elif itm_pe_oi_chng > 0 and itm_ce_oi_chng < 0 and otm_ce_oi_chng > 0 and otm_ce_oi_chng > otm_pe_oi_chng :
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
         st.write(f"ITM PCR OI Chng: {itm_pcr_chng:.4f} (PE ITM OI Chng: {itm_pe_oi_chng}, CE ITM OI Chng: {itm_ce_oi_chng})")
         st.write(f"OTM PCR OI Chng: {otm_pcr_chng:.4f} (PE OTM OI Chng: {otm_pe_oi_chng}, CE OTM OI Chng: {otm_ce_oi_chng})")
-        st.write(f"ITM PCR OI: {itm_pcr:.4f} (PE ITM OI: {itm_pe_oi}, CE ITM OI: {itm_ce_oi})")
-        st.write(f"OTM PCR OI: {otm_pcr:.4f} (PE OTM OI: {otm_pe_oi}, CE OTM OI: {otm_ce_oi})")
+        # st.write(f"ITM PCR OI: {itm_pcr:.4f} (PE ITM OI: {itm_pe_oi}, CE ITM OI: {itm_ce_oi})")
+        # st.write(f"OTM PCR OI: {otm_pcr:.4f} (PE OTM OI: {otm_pe_oi}, CE OTM OI: {otm_ce_oi})")
         # if otm_pe_oi > otm_ce_oi:
         #     st.write(" more otm pe compared to ce")
         # elif otm_ce_oi >  otm_pe_oi:
