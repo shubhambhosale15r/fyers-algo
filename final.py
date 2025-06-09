@@ -164,10 +164,10 @@ def compute_signals(merged_df, atm_strike):
         st.write(f"(PE OTM OI Chng: {otm_pe_oi_chng}, CE OTM OI Chng: {otm_ce_oi_chng})")
         # st.write(f"ITM PCR OI: {itm_pcr:.4f} (PE ITM OI: {itm_pe_oi}, CE ITM OI: {itm_ce_oi})")
         # st.write(f"OTM PCR OI: {otm_pcr:.4f} (PE OTM OI: {otm_pe_oi}, CE OTM OI: {otm_ce_oi})")
-        # if otm_pe_oi > otm_ce_oi:
-        #     st.write(" more otm pe compared to ce")
-        # elif otm_ce_oi >  otm_pe_oi:
-        #     st.write(" more otm ce compared to pe")
+        if otm_pe_oi_chng > otm_ce_oi_chng:
+            st.write(" more otm pe compared to ce")
+        elif otm_ce_oi_chng >  otm_pe_oi_chng:
+            st.write(" more otm ce compared to pe")
 
     return signal
 
