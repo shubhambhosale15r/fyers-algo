@@ -98,6 +98,34 @@ def get_symbol_ltp(cid, token, symbol):
     return resp["d"][0]["v"]["lp"]
 
 
+def get_atm_strike_and_option_prices(option_chain, underlying_ltp):
+    """
+    Given the option chain (list of dicts) and underlying LTP,
+    returns a tuple: (atm_strike, ce_price, pe_price)
+    """
+    import pandas as pd
+
+    # Create DataFrame from option chain
+    df = pd.DataFrame(option_chain)
+    if df.empty or "strike_price" not in df.columns or "option_type" not in df.columns or "ltp" not in df.columns:
+        return None, None, None
+
+    # Find unique strikes and pick ATM
+    strikes = df["strike_price"].unique()
+    if len(strikes) == 0:
+        return None, None, None
+    atm_strike = min(strikes, key=lambda x: abs(x - underlying_ltp))
+
+    # Get CE and PE prices at ATM
+    ce_row = df[(df["strike_price"] == atm_strike) & (df["option_type"] == "CE")]
+    pe_row = df[(df["strike_price"] == atm_strike) & (df["option_type"] == "PE")]
+
+    ce_price = ce_row["ltp"].values[0] if not ce_row.empty else None
+    pe_price = pe_row["ltp"].values[0] if not pe_row.empty else None
+
+    return atm_strike, ce_price, pe_price
+
+
 def compute_signals(merged_df, atm_strike):
     strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
     try:
@@ -106,6 +134,8 @@ def compute_signals(merged_df, atm_strike):
         st.error(f"ATM strike {atm_strike} not in available strikes")
         return "SIDEWAYS"
 
+    atm_strike, ce_price, pe_price = get_atm_strike_and_option_prices(option_chain, underlying_ltp)
+    st.write(f"ATM Strike: {atm_strike}, CE Price: {ce_price}, PE Price: {pe_price}")
     
     # Identify ITM strikes (3 closest below ATM for CE, above ATM for PE)
     ce_itm_strikes = []
