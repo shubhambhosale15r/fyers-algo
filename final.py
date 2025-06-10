@@ -99,14 +99,14 @@ def get_symbol_ltp(cid, token, symbol):
 
 
 
-def compute_signals(merged_df, atm_strike):
+def compute_signals(merged_df, atm_strike,ltp):
     strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
     try:
         idx = strikes.index(atm_strike)
     except ValueError:
         st.error(f"ATM strike {atm_strike} not in available strikes")
         return "SIDEWAYS"
-
+    # ATM Strike and atm ce and atm pe prices
     atm_row = merged_df[merged_df["Strike"] == atm_strike]
     if not atm_row.empty:
         ce_price = atm_row["CE_ltp"].values[0] if "CE_ltp" in atm_row else None
@@ -117,6 +117,7 @@ def compute_signals(merged_df, atm_strike):
 
     # Now you can use atm_strike, ce_price, and pe_price in your logic
     st.write(f"ATM Strike: {atm_strike}, CE Price: {ce_price}, PE Price: {pe_price}")
+    st.write(f"Spot Price: {ltp} ")
 
 
     
@@ -659,7 +660,7 @@ def format_and_show(chain, title, ltp, show_signals=False):
         atm = min(merged["Strike"].dropna(), key=lambda x: abs(x - ltp))
     st.subheader(title)
     if show_signals and atm is not None:
-        signal = compute_signals(merged, atm)
+        signal = compute_signals(merged, atm,ltp)
         st.metric("PCR Signal", signal)  # Show just the PCR signal
     styled = merged.style.apply(
         lambda row: ["background:yellow" if row["Strike"] == atm else "" for _ in row],
