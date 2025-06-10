@@ -145,9 +145,9 @@ def compute_signals(merged_df, atm_strike):
         
 
         # Generate signals based on PCR values
-        if itm_pcr_chng < 0.8 and otm_pcr_chng > 1.2 and itm_pcr_vol < 1 and otm_pcr_vol > 1:
+        if itm_pcr_chng < 1 and otm_pcr_chng > 1 and itm_pcr_vol < 1 and otm_pcr_vol > 1:
             signal = "BUY"
-        elif itm_pcr_chng > 1.2 and otm_pcr_chng < 0.8 and itm_pcr_vol > 1 and otm_pcr_vol < 1:
+        elif itm_pcr_chng > 1 and otm_pcr_chng < 1 and itm_pcr_vol > 1 and otm_pcr_vol < 1:
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
