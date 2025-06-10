@@ -107,7 +107,7 @@ def compute_signals(merged_df, atm_strike):
         st.error(f"ATM strike {atm_strike} not in available strikes")
         return "SIDEWAYS"
 
-     atm_row = merged_df[merged_df["Strike"] == atm_strike]
+    atm_row = merged_df[merged_df["Strike"] == atm_strike]
     if not atm_row.empty:
         ce_price = atm_row["CE_ltp"].values[0] if "CE_ltp" in atm_row else None
         pe_price = atm_row["PE_ltp"].values[0] if "PE_ltp" in atm_row else None
