@@ -98,7 +98,7 @@ def get_symbol_ltp(cid, token, symbol):
     return resp["d"][0]["v"]["lp"]
 
 
-def compute_signals(merged_df, atm_strike,cid, token, sym):
+def compute_signals(merged_df, atm_strike):
     strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
     try:
         idx = strikes.index(atm_strike)
