@@ -105,14 +105,7 @@ def compute_signals(merged_df, atm_strike):
     except ValueError:
         st.error(f"ATM strike {atm_strike} not in available strikes")
         return "SIDEWAYS"
-    # Identify atm ce and pe price
-    ltp=get_underlying_ltp(cid, token, sym)
-    strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
-    atm_strike = min(strikes, key=lambda x: abs(x - ltp))
-    atm_ce_price = merged_df[merged_df["Strike"] == atm_strike]["CE_ltp"].values[0]
-    atm_pe_price = merged_df[merged_df["Strike"] == atm_strike]["PE_ltp"].values[0]
-    st.write(f"atm ce {atm_ce_price}")
-    st.write(f"atm pe {atm_pe_price}")
+
     
     # Identify ITM strikes (3 closest below ATM for CE, above ATM for PE)
     ce_itm_strikes = []
