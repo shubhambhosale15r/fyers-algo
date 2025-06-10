@@ -106,19 +106,28 @@ def compute_signals(merged_df, atm_strike,ltp):
     except ValueError:
         st.error(f"ATM strike {atm_strike} not in available strikes")
         return "SIDEWAYS"
+        
     # ATM Strike and atm ce and atm pe prices
     atm_row = merged_df[merged_df["Strike"] == atm_strike]
     if not atm_row.empty:
-        ce_price = atm_row["CE_ltp"].values[0] if "CE_ltp" in atm_row else None
-        pe_price = atm_row["PE_ltp"].values[0] if "PE_ltp" in atm_row else None
+        atm_ce_price = atm_row["CE_ltp"].values[0] if "CE_ltp" in atm_row else None
+        atm_pe_price = atm_row["PE_ltp"].values[0] if "PE_ltp" in atm_row else None
     else:
         ce_price = None
         pe_price = None
 
-    # Now you can use atm_strike, ce_price, and pe_price in your logic
-    st.write(f"ATM Strike: {atm_strike}, CE Price: {ce_price}, PE Price: {pe_price}")
-    st.write(f"Spot Price: {ltp} ")
-
+    # Now you can use atm_strike, ce_price, and pe_price 
+    # put call parity
+    syn_spot = atm_strike + atm_ce_price - atm_pe_price
+    put_call_parity=""
+    if syn_spot > ltp: # here ltp is current underlying price
+        put_call_parity="BUY"
+    elif syn_spot < ltp:
+        put_call_parity="SELL"
+    else:
+        put_call_parity="SIDEWAYS"
+    
+    st.write(f"Put Call Parity: {put_call_parity} ,Spot Price: {ltp}, ATM Strike: {atm_strike}, CE Price: {atm_ce_price}, PE Price: {atm_pe_price}")
 
     
     # Identify ITM strikes (3 closest below ATM for CE, above ATM for PE)
@@ -157,12 +166,10 @@ def compute_signals(merged_df, atm_strike,ltp):
         itm_pcr_chng = itm_pe_oi_chng / itm_ce_oi_chng 
         otm_pcr_chng = otm_pe_oi_chng  / otm_ce_oi_chng  
 
-        
-
         # Generate signals based on PCR values
-        if itm_pcr_chng < 1 and otm_pcr_chng > 1 and itm_pcr_vol < 1 and otm_pcr_vol > 1:
+        if itm_pcr_chng < 1 and otm_pcr_chng > 1 and itm_pcr_vol < 1 and otm_pcr_vol > 1 and put_call_parity == "BUY":
             signal = "BUY"
-        elif itm_pcr_chng > 1 and otm_pcr_chng < 1 and itm_pcr_vol > 1 and otm_pcr_vol < 1:
+        elif itm_pcr_chng > 1 and otm_pcr_chng < 1 and itm_pcr_vol > 1 and otm_pcr_vol < 1 and put_call_parity == "SELL":
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
@@ -171,9 +178,9 @@ def compute_signals(merged_df, atm_strike,ltp):
         st.write(f"ITM PCR Volume: {itm_pcr_vol:.4f} (PE ITM Volume: {itm_pe_vol}, CE ITM Volume: {itm_ce_vol})")
         st.write(f"OTM PCR Volume: {otm_pcr_vol:.4f} (PE OTM Volume: {otm_pe_vol}, CE OTM Volume: {otm_ce_vol})")
     else:
-        if itm_pe_oi_chng < 0 and itm_ce_oi_chng > 0 and otm_pe_oi_chng > 0 and otm_pe_oi_chng > otm_ce_oi_chng and itm_pcr_vol < 1 and otm_pcr_vol > 1:
+        if itm_pe_oi_chng < 0 and itm_ce_oi_chng > 0 and otm_pe_oi_chng > 0 and otm_pe_oi_chng > otm_ce_oi_chng and itm_pcr_vol < 1 and otm_pcr_vol > 1 and put_call_parity == "BUY":
             signal = "BUY"
-        elif itm_pe_oi_chng > 0 and itm_ce_oi_chng < 0 and otm_ce_oi_chng > 0 and otm_ce_oi_chng > otm_pe_oi_chng and itm_pcr_vol > 1 and otm_pcr_vol < 1 :
+        elif itm_pe_oi_chng > 0 and itm_ce_oi_chng < 0 and otm_ce_oi_chng > 0 and otm_ce_oi_chng > otm_pe_oi_chng and itm_pcr_vol > 1 and otm_pcr_vol < 1 and put_call_parity == "SELL":
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
