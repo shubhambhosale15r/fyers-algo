@@ -105,7 +105,12 @@ def compute_signals(merged_df, atm_strike):
     except ValueError:
         st.error(f"ATM strike {atm_strike} not in available strikes")
         return "SIDEWAYS"
-
+    # Identify atm ce and pe price
+    atm_ce_price = merged_df[(merged_df["Strike"] == atm_strike) & (merged_df["OptionType"] == "CE")]["LTP"].values[0]  # or "Close" or "Bid"/"Ask"
+    atm_pe_price = merged_df[(merged_df["Strike"] == atm_strike) & (merged_df["OptionType"] == "PE")]["LTP"].values[0]
+    st.write(f"atm ce {atm_ce_price}")
+    st.write(f"atm pe {atm_pe_price}")
+    
     # Identify ITM strikes (3 closest below ATM for CE, above ATM for PE)
     ce_itm_strikes = []
     pe_itm_strikes = []
@@ -133,9 +138,9 @@ def compute_signals(merged_df, atm_strike):
     itm_ce_vol = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_Vol"].sum()
     otm_pe_vol = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_Vol"].sum()
     otm_ce_vol = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_Vol"].sum()
-
-    itm_pcr_vol = itm_pe_vol / itm_ce_vol
-    otm_pcr_vol = otm_pe_vol / otm_ce_vol
+    if itm_pe_vol !=0 and itm_ce_vol !=0 and otm_pe_vol !=0 and otm_ce_vol !=0:
+        itm_pcr_vol = itm_pe_vol / itm_ce_vol
+        otm_pcr_vol = otm_pe_vol / otm_ce_vol
 
     # Avoid division by zero
     if itm_pe_oi_chng > 0 and itm_ce_oi_chng > 0 and otm_pe_oi_chng > 0 and otm_ce_oi_chng > 0 :
