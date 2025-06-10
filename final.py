@@ -106,10 +106,10 @@ def compute_signals(merged_df, atm_strike):
         st.error(f"ATM strike {atm_strike} not in available strikes")
         return "SIDEWAYS"
     # Identify atm ce and pe price
-    atm_ce_price = merged_df[(merged_df["Strike"] == atm_strike) & (merged_df["OptionType"] == "CE")]["LTP"].values[0]  # or "Close" or "Bid"/"Ask"
-    atm_pe_price = merged_df[(merged_df["Strike"] == atm_strike) & (merged_df["OptionType"] == "PE")]["LTP"].values[0]
-    st.write(f"atm ce {atm_ce_price}")
-    st.write(f"atm pe {atm_pe_price}")
+    # atm_ce_price = merged_df[(merged_df["Strike"] == atm_strike) & (merged_df["OptionType"] == "CE")]["LTP"].values[0]  # or "Close" or "Bid"/"Ask"
+    # atm_pe_price = merged_df[(merged_df["Strike"] == atm_strike) & (merged_df["OptionType"] == "PE")]["LTP"].values[0]
+    # st.write(f"atm ce {atm_ce_price}")
+    # st.write(f"atm pe {atm_pe_price}")
     
     # Identify ITM strikes (3 closest below ATM for CE, above ATM for PE)
     ce_itm_strikes = []
