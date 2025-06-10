@@ -98,7 +98,7 @@ def get_symbol_ltp(cid, token, symbol):
     return resp["d"][0]["v"]["lp"]
 
 
-def compute_signals(merged_df, atm_strike):
+def compute_signals(merged_df, atm_strike,cid, token, sym):
     strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
     try:
         idx = strikes.index(atm_strike)
@@ -653,7 +653,7 @@ def format_and_show(chain, title, ltp, show_signals=False):
         atm = min(merged["Strike"].dropna(), key=lambda x: abs(x - ltp))
     st.subheader(title)
     if show_signals and atm is not None:
-        signal = compute_signals(merged, atm)
+        signal = compute_signals(merged, atm,cid, token, sym)
         st.metric("PCR Signal", signal)  # Show just the PCR signal
     styled = merged.style.apply(
         lambda row: ["background:yellow" if row["Strike"] == atm else "" for _ in row],
