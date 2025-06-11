@@ -121,16 +121,16 @@ def compute_signals(merged_df, atm_strike,ltp):
 
     # Now you can use atm_strike, ce_price, and pe_price 
     # put call parity
-    syn_spot = atm_strike + atm_ce_price - atm_pe_price
-    put_call_parity=""
-    if syn_spot > ltp: # here ltp is current underlying price
-        put_call_parity="SELL"
-    elif syn_spot < ltp:
-        put_call_parity="BUY"
-    else:
-        put_call_parity="SIDEWAYS"
+    # syn_spot = atm_strike + atm_ce_price - atm_pe_price
+    # put_call_parity=""
+    # if syn_spot > ltp: # here ltp is current underlying price
+    #     put_call_parity="SELL"
+    # elif syn_spot < ltp:
+    #     put_call_parity="BUY"
+    # else:
+    #     put_call_parity="SIDEWAYS"
     
-    st.write(f"Put-call parity :{put_call_parity},syn_spot :{syn_spot} ,Spot Price: {ltp}, ATM Strike: {atm_strike}, CE Price: {atm_ce_price:.2f}, PE Price: {atm_pe_price:.2f}")
+    # st.write(f"Put-call parity :{put_call_parity},syn_spot :{syn_spot} ,Spot Price: {ltp}, ATM Strike: {atm_strike}, CE Price: {atm_ce_price:.2f}, PE Price: {atm_pe_price:.2f}")
 
     
     # Identify ITM strikes (3 closest below ATM for CE, above ATM for PE)
@@ -165,36 +165,36 @@ def compute_signals(merged_df, atm_strike,ltp):
     #     otm_pcr_vol = otm_pe_vol / otm_ce_vol
 
     # Avoid division by zero
-    if itm_pe_oi_chng > 0 and itm_ce_oi_chng > 0 and otm_pe_oi_chng > 0 and otm_ce_oi_chng > 0 :
+    if itm_pe_oi_chng > 0 and itm_ce_oi_chng > 0  :
         itm_pcr_chng = itm_pe_oi_chng / itm_ce_oi_chng 
-        otm_pcr_chng = otm_pe_oi_chng  / otm_ce_oi_chng  
+        # otm_pcr_chng = otm_pe_oi_chng  / otm_ce_oi_chng  
 
         # Generate signals based on PCR values
-        if itm_pcr_chng < 1 and otm_pcr_chng > 1 and put_call_parity =="SELL":
+        if itm_pcr_chng < 1  and atm_pe_price >= 1.25 * atm_ce_price:
             signal = "BUY"
-        elif itm_pcr_chng > 1 and otm_pcr_chng < 1 and put_call_parity =="BUY" :
+        elif itm_pcr_chng > 1 and atm_ce_price >= 1.25 * atm_pe_price :
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
         st.write(f"ITM PCR OI Chng: {itm_pcr_chng:.4f} (PE ITM OI Chng: {itm_pe_oi_chng}, CE ITM OI Chng: {itm_ce_oi_chng})")
-        st.write(f"OTM PCR OI Chng: {otm_pcr_chng:.4f} (PE OTM OI Chng: {otm_pe_oi_chng}, CE OTM OI Chng: {otm_ce_oi_chng})")
+        # st.write(f"OTM PCR OI Chng: {otm_pcr_chng:.4f} (PE OTM OI Chng: {otm_pe_oi_chng}, CE OTM OI Chng: {otm_ce_oi_chng})")
         # st.write(f"ITM PCR Volume: {itm_pcr_vol:.4f} (PE ITM Volume: {itm_pe_vol}, CE ITM Volume: {itm_ce_vol})")
         # st.write(f"OTM PCR Volume: {otm_pcr_vol:.4f} (PE OTM Volume: {otm_pe_vol}, CE OTM Volume: {otm_ce_vol})")
     else:
-        if itm_pe_oi_chng < 0 and itm_ce_oi_chng > 0 and otm_pe_oi_chng > 0 and otm_pe_oi_chng > otm_ce_oi_chng and put_call_parity =="SELL" :
+        if itm_pe_oi_chng < 0 and itm_ce_oi_chng > 0  and atm_pe_price >= 1.25 * atm_ce_price :   
             signal = "BUY"
-        elif itm_pe_oi_chng > 0 and itm_ce_oi_chng < 0 and otm_ce_oi_chng > 0 and otm_ce_oi_chng > otm_pe_oi_chng and put_call_parity =="BUY" :
+        elif itm_pe_oi_chng > 0 and itm_ce_oi_chng < 0 and atm_ce_price >= 1.25 * atm_pe_price :
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
         st.write(f"(PE ITM OI Chng: {itm_pe_oi_chng}, CE ITM OI Chng: {itm_ce_oi_chng})")
-        st.write(f"(PE OTM OI Chng: {otm_pe_oi_chng}, CE OTM OI Chng: {otm_ce_oi_chng})")
+        # st.write(f"(PE OTM OI Chng: {otm_pe_oi_chng}, CE OTM OI Chng: {otm_ce_oi_chng})")
         # st.write(f"ITM PCR Volume: {itm_pcr_vol:.4f} (PE ITM Volume: {itm_pe_vol}, CE ITM Volume: {itm_ce_vol})")
         # st.write(f"OTM PCR Volume: {otm_pcr_vol:.4f} (PE OTM Volume: {otm_pe_vol}, CE OTM Volume: {otm_ce_vol})")
-        if otm_pe_oi_chng > otm_ce_oi_chng:
-            st.write("More OTM PE OI Change compared to CE")
-        elif otm_ce_oi_chng >  otm_pe_oi_chng:
-            st.write("More OTM CE OI Change compared to PE")
+        # if otm_pe_oi_chng > otm_ce_oi_chng:
+        #     st.write("More OTM PE OI Change compared to CE")
+        # elif otm_ce_oi_chng >  otm_pe_oi_chng:
+        #     st.write("More OTM CE OI Change compared to PE")
 
     return signal
 
