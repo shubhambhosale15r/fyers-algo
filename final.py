@@ -9,6 +9,9 @@ import logging
 import uuid
 from streamlit_autorefresh import st_autorefresh
 
+#setting wide mode as default
+st.set_page_config(layout="wide")
+
 # — SESSION STATE FOR API COUNTERS & RATE LIMIT —
 if "option_chain_api_count" not in st.session_state:
     st.session_state["option_chain_api_count"] = 0
