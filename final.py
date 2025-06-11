@@ -127,7 +127,7 @@ def compute_signals(merged_df, atm_strike,ltp):
     else:
         put_call_parity="SIDEWAYS"
     
-    st.write(f"Put Call Parity: {put_call_parity} ,Spot Price: {ltp}, ATM Strike: {atm_strike}, CE Price: {atm_ce_price}, PE Price: {atm_pe_price}")
+    st.write(f"Put Call Parity: {put_call_parity} ,Syn Spot: {syn_spot}, Spot Price: {ltp}, ATM Strike: {atm_strike}, CE Price: {atm_ce_price}, PE Price: {atm_pe_price}")
 
     
     # Identify ITM strikes (3 closest below ATM for CE, above ATM for PE)
