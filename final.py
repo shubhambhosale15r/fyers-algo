@@ -265,6 +265,7 @@ def compute_signals(merged_df, atm_strike,ltp):
         
       st.write(f"itm_pcr_oi :{itm_pcr_oi}")
       st.write(f"itm_pcr_oi_chng :{itm_pcr_oi_chng}")
+      st.write(f"itm_ce_price :{itm_ce_price} itm_pe_price :{itm_pe_price}")
       st.write(f"net_premium_oi :{net_premium_oi}")
       st.write(f"net_premium_oi_change :{net_premium_oi_change}")
       
@@ -279,6 +280,7 @@ def compute_signals(merged_df, atm_strike,ltp):
         st.write(f"itm_pcr_oi :{itm_pcr_oi}")
         st.write(f"itm_ce_oi_chng :{itm_ce_oi_chng}")
         st.write(f"itm_pe_oi_chng :{itm_pe_oi_chng}")
+        st.write(f"itm_ce_price :{itm_ce_price} itm_pe_price :{itm_pe_price}")
         st.write(f"net_premium_oi :{net_premium_oi}")
         st.write(f"net_premium_oi_change :{net_premium_oi_change}")
 
