@@ -101,90 +101,90 @@ def get_symbol_ltp(cid, token, symbol):
     return resp["d"][0]["v"]["lp"]
 
 
-'''
-def compute_signals(merged_df, atm_strike,ltp):
-    strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
-    try:
-        idx = strikes.index(atm_strike)
-    except ValueError:
-        st.error(f"ATM strike {atm_strike} not in available strikes")
-        return "SIDEWAYS"
+################################################################
+# def compute_signals(merged_df, atm_strike,ltp):
+#     strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
+#     try:
+#         idx = strikes.index(atm_strike)
+#     except ValueError:
+#         st.error(f"ATM strike {atm_strike} not in available strikes")
+#         return "SIDEWAYS"
         
-    # ATM Strike and atm ce and atm pe prices
-    atm_row = merged_df[merged_df["Strike"] == atm_strike]
-    if not atm_row.empty:
-        atm_ce_price = atm_row["CE_ltp"].values[0] if "CE_ltp" in atm_row else None
-        atm_pe_price = atm_row["PE_ltp"].values[0] if "PE_ltp" in atm_row else None
-    else:
-        ce_price = None
-        pe_price = None
+#     # ATM Strike and atm ce and atm pe prices
+#     atm_row = merged_df[merged_df["Strike"] == atm_strike]
+#     if not atm_row.empty:
+#         atm_ce_price = atm_row["CE_ltp"].values[0] if "CE_ltp" in atm_row else None
+#         atm_pe_price = atm_row["PE_ltp"].values[0] if "PE_ltp" in atm_row else None
+#     else:
+#         ce_price = None
+#         pe_price = None
 
-    # st.write(f"CE Price: {atm_ce_price:.2f}, PE Price: {atm_pe_price:.2f}")
+#     # st.write(f"CE Price: {atm_ce_price:.2f}, PE Price: {atm_pe_price:.2f}")
     
-    # Identify ITM strikes (3 closest below ATM for CE, above ATM for PE)
-    ce_itm_strikes = []
-    pe_itm_strikes = []
-    if idx >= 1:  # Ensure there are strikes below ATM
-        ce_itm_strikes = strikes[max(0, idx-3):idx]  # Up to 3 strikes below ATM
-    if idx < len(strikes) - 1:  # Ensure there are strikes above ATM
-        pe_itm_strikes = strikes[idx+1:min(len(strikes), idx+4)]  # Up to 3 strikes above ATM
+#     # Identify ITM strikes (3 closest below ATM for CE, above ATM for PE)
+#     ce_itm_strikes = []
+#     pe_itm_strikes = []
+#     if idx >= 1:  # Ensure there are strikes below ATM
+#         ce_itm_strikes = strikes[max(0, idx-3):idx]  # Up to 3 strikes below ATM
+#     if idx < len(strikes) - 1:  # Ensure there are strikes above ATM
+#         pe_itm_strikes = strikes[idx+1:min(len(strikes), idx+4)]  # Up to 3 strikes above ATM
 
-    # Identify OTM strikes (3 closest above ATM for CE, below ATM for PE)
-    ce_otm_strikes = []
-    pe_otm_strikes = []
-    if idx < len(strikes) - 1:  # Ensure there are strikes above ATM
-        ce_otm_strikes = strikes[idx+1:min(len(strikes), idx+4)]  # Up to 3 strikes above ATM
-    if idx >= 1:  # Ensure there are strikes below ATM
-        pe_otm_strikes = strikes[max(0, idx-3):idx]  # Up to 3 strikes below ATM
+#     # Identify OTM strikes (3 closest above ATM for CE, below ATM for PE)
+#     ce_otm_strikes = []
+#     pe_otm_strikes = []
+#     if idx < len(strikes) - 1:  # Ensure there are strikes above ATM
+#         ce_otm_strikes = strikes[idx+1:min(len(strikes), idx+4)]  # Up to 3 strikes above ATM
+#     if idx >= 1:  # Ensure there are strikes below ATM
+#         pe_otm_strikes = strikes[max(0, idx-3):idx]  # Up to 3 strikes below ATM
 
-    # Compute PCR OI Chng for ITM and OTM
-    itm_pe_oi_chng = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OICh"].sum()
-    itm_ce_oi_chng = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OICh"].sum()
-    otm_pe_oi_chng = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_OICh"].sum()
-    otm_ce_oi_chng = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OICh"].sum()
+#     # Compute PCR OI Chng for ITM and OTM
+#     itm_pe_oi_chng = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OICh"].sum()
+#     itm_ce_oi_chng = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OICh"].sum()
+#     otm_pe_oi_chng = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_OICh"].sum()
+#     otm_ce_oi_chng = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OICh"].sum()
 
-    # #Compute PCR OI for ITM and OTM
-    # itm_pe_oi = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OI"].sum()
-    # itm_ce_oi = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OI"].sum()
-    # otm_pe_oi = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_OI"].sum()
-    # otm_ce_oi = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OI"].sum()
-    # if itm_pe_oi !=0 and itm_ce_oi !=0 and otm_pe_oi !=0 and otm_ce_oi !=0:
-    #     itm_pcr_oi = itm_pe_oi / itm_ce_oi
-    #     otm_pcr_oi = otm_pe_oi / otm_ce_oi
+#     # #Compute PCR OI for ITM and OTM
+#     # itm_pe_oi = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OI"].sum()
+#     # itm_ce_oi = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OI"].sum()
+#     # otm_pe_oi = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_OI"].sum()
+#     # otm_ce_oi = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OI"].sum()
+#     # if itm_pe_oi !=0 and itm_ce_oi !=0 and otm_pe_oi !=0 and otm_ce_oi !=0:
+#     #     itm_pcr_oi = itm_pe_oi / itm_ce_oi
+#     #     otm_pcr_oi = otm_pe_oi / otm_ce_oi
 
-        # #Compute PCR Vol for ITM and OTM
-    itm_pe_price = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
-    itm_ce_price = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
+#         # #Compute PCR Vol for ITM and OTM
+#     itm_pe_price = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
+#     itm_ce_price = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
     
     
-    # Avoid division by zero
-    if itm_pe_oi_chng > 0 and itm_ce_oi_chng > 0  :
-        itm_pcr_chng = itm_pe_oi_chng / itm_ce_oi_chng 
+#     # Avoid division by zero
+#     if itm_pe_oi_chng > 0 and itm_ce_oi_chng > 0  :
+#         itm_pcr_chng = itm_pe_oi_chng / itm_ce_oi_chng 
         
-        # Generate signals based on PCR values
-        if itm_pcr_chng < 1  and itm_pe_price > itm_ce_price:
-            signal = "BUY"
-        elif itm_pcr_chng > 1 and  itm_ce_price > itm_pe_price:
-            signal = "SELL"
-        else:
-            signal = "SIDEWAYS"
-        st.write(f"ITM PCR OI Chng: {itm_pcr_chng:.2f} (PE ITM OI Chng: {itm_pe_oi_chng:.2f}, CE ITM OI Chng: {itm_ce_oi_chng:.2f})")
-        st.write(f"ITM CE LTP :{itm_ce_price:.2f}  ITM PE LTP :{itm_pe_price:.2f}")
-        # st.write(f"ITM PCR OI: {itm_pcr_oi:.2f} (PE ITM OI: {itm_pe_oi:.2f}, CE ITM OI: {itm_ce_oi:.2f})")
+#         # Generate signals based on PCR values
+#         if itm_pcr_chng < 1  and itm_pe_price > itm_ce_price:
+#             signal = "BUY"
+#         elif itm_pcr_chng > 1 and  itm_ce_price > itm_pe_price:
+#             signal = "SELL"
+#         else:
+#             signal = "SIDEWAYS"
+#         st.write(f"ITM PCR OI Chng: {itm_pcr_chng:.2f} (PE ITM OI Chng: {itm_pe_oi_chng:.2f}, CE ITM OI Chng: {itm_ce_oi_chng:.2f})")
+#         st.write(f"ITM CE LTP :{itm_ce_price:.2f}  ITM PE LTP :{itm_pe_price:.2f}")
+#         # st.write(f"ITM PCR OI: {itm_pcr_oi:.2f} (PE ITM OI: {itm_pe_oi:.2f}, CE ITM OI: {itm_ce_oi:.2f})")
    
-    else:
-        if itm_pe_oi_chng < 0 and itm_ce_oi_chng > 0  and itm_pe_price > itm_ce_price:   
-            signal = "BUY"
-        elif itm_pe_oi_chng > 0 and itm_ce_oi_chng < 0 and  itm_ce_price > itm_pe_price :
-            signal = "SELL"
-        else:
-            signal = "SIDEWAYS"
-        st.write(f"(PE ITM OI Chng: {itm_pe_oi_chng:.2f}, CE ITM OI Chng: {itm_ce_oi_chng:.2f})")
-        st.write(f"ITM CE LTP :{itm_ce_price:.2f}  ITM PE LTP :{itm_pe_price:.2f}")
-        # st.write(f"ITM PCR OI: {itm_pcr_oi:.2f} (PE ITM OI: {itm_pe_oi:.2f}, CE ITM OI: {itm_ce_oi:.2f})")
+#     else:
+#         if itm_pe_oi_chng < 0 and itm_ce_oi_chng > 0  and itm_pe_price > itm_ce_price:   
+#             signal = "BUY"
+#         elif itm_pe_oi_chng > 0 and itm_ce_oi_chng < 0 and  itm_ce_price > itm_pe_price :
+#             signal = "SELL"
+#         else:
+#             signal = "SIDEWAYS"
+#         st.write(f"(PE ITM OI Chng: {itm_pe_oi_chng:.2f}, CE ITM OI Chng: {itm_ce_oi_chng:.2f})")
+#         st.write(f"ITM CE LTP :{itm_ce_price:.2f}  ITM PE LTP :{itm_pe_price:.2f}")
+#         # st.write(f"ITM PCR OI: {itm_pcr_oi:.2f} (PE ITM OI: {itm_pe_oi:.2f}, CE ITM OI: {itm_ce_oi:.2f})")
 
-    return signal
-'''
+#     return signal
+#########################################################
 def compute_signals(merged_df, atm_strike,ltp):
     strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
     try:
