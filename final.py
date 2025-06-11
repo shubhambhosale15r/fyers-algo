@@ -101,7 +101,7 @@ def get_symbol_ltp(cid, token, symbol):
     return resp["d"][0]["v"]["lp"]
 
 
-
+'''
 def compute_signals(merged_df, atm_strike,ltp):
     strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
     try:
@@ -182,6 +182,105 @@ def compute_signals(merged_df, atm_strike,ltp):
         st.write(f"(PE ITM OI Chng: {itm_pe_oi_chng:.2f}, CE ITM OI Chng: {itm_ce_oi_chng:.2f})")
         st.write(f"ITM CE LTP :{itm_ce_price:.2f}  ITM PE LTP :{itm_pe_price:.2f}")
         # st.write(f"ITM PCR OI: {itm_pcr_oi:.2f} (PE ITM OI: {itm_pe_oi:.2f}, CE ITM OI: {itm_ce_oi:.2f})")
+
+    return signal
+'''
+def compute_signals(merged_df, atm_strike,ltp):
+    strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
+    try:
+        idx = strikes.index(atm_strike)
+    except ValueError:
+        st.error(f"ATM strike {atm_strike} not in available strikes")
+        return "SIDEWAYS"
+        
+    # ATM Strike and atm ce and atm pe prices
+    atm_row = merged_df[merged_df["Strike"] == atm_strike]
+    if not atm_row.empty:
+        atm_ce_price = atm_row["CE_ltp"].values[0] if "CE_ltp" in atm_row else None
+        atm_pe_price = atm_row["PE_ltp"].values[0] if "PE_ltp" in atm_row else None
+    else:
+        ce_price = None
+        pe_price = None
+
+    # st.write(f"CE Price: {atm_ce_price:.2f}, PE Price: {atm_pe_price:.2f}")
+    
+    # Identify ITM strikes (3 closest below ATM for CE, above ATM for PE)
+    ce_itm_strikes = []
+    pe_itm_strikes = []
+    if idx >= 1:  # Ensure there are strikes below ATM
+        ce_itm_strikes = strikes[max(0, idx-3):idx]  # Up to 3 strikes below ATM
+    if idx < len(strikes) - 1:  # Ensure there are strikes above ATM
+        pe_itm_strikes = strikes[idx+1:min(len(strikes), idx+4)]  # Up to 3 strikes above ATM
+
+    # Identify OTM strikes (3 closest above ATM for CE, below ATM for PE)
+    ce_otm_strikes = []
+    pe_otm_strikes = []
+    if idx < len(strikes) - 1:  # Ensure there are strikes above ATM
+        ce_otm_strikes = strikes[idx+1:min(len(strikes), idx+4)]  # Up to 3 strikes above ATM
+    if idx >= 1:  # Ensure there are strikes below ATM
+        pe_otm_strikes = strikes[max(0, idx-3):idx]  # Up to 3 strikes below ATM
+
+    # total itm ce and pe oi change
+    itm_pe_oi_chng = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OICh"].sum()
+    itm_ce_oi_chng = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OICh"].sum()
+  
+    # total itm ce and pe oi
+    itm_pe_oi = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OI"].sum()
+    itm_ce_oi = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OI"].sum()
+    itm_pcr_oi=itm_pe_oi/itm_ce_oi
+
+    # sum  for ITM prices ce and pe
+    itm_pe_price = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
+    itm_ce_price = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
+    
+    # Net premium using OI and oi change
+    net_premium_oi= (itm_ce_oi*itm_ce_price)-(itm_pe_oi*itm_pe_price)
+    net_premium_oi_change=(itm_ce_oi_chng*itm_ce_price)-(itm_pe_oi_chng*itm_pe_price)
+    
+    
+    # # Core logic
+    # if itm_ce_oi_chng > 0 and itm_pe_oi_chng >0 and net_premium_oi_change > 0:
+    #   net_premium_signal="BUY"
+    # elif itm_ce_oi_chng > 0 and itm_pe_oi_chng >0 and net_premium_oi_change < 0 :
+    #   net_premium_signal="SELL"
+    # elif itm_ce_oi_chng < 0 and itm_pe_oi_chng>0 and net_premium_oi_change < 0:
+    #   net_premium_signal="SELL"
+    # elif itm_ce_oi_chng > 0 and itm_pe_oi_chng < 0 and net_premium_oi_change > 0:
+    #   net_premium_signal="BUY"
+    # else:
+    #   net_premium_signal="SIDEWAYS"
+    
+    
+    # Avoid division by zero
+    if itm_pe_oi_chng > 0 and itm_ce_oi_chng > 0  :
+      itm_pcr_oi_chng = itm_pe_oi_chng / itm_ce_oi_chng 
+      
+      
+      if itm_pcr_oi < 1 and itm_pcr_oi_chng < 1 and net_premium_oi > 0 and net_premium_oi_change > 0:
+        signal = "BUY"
+      elif itm_pcr_oi > 1 and itm_pe_oi_chng > 1 and net_premium_oi < 0 and net_premium_oi_change < 0:
+        signal = "SELL"
+      else:
+        signal="SIDEWAYS"
+        
+      st.write(f"itm_pcr_oi :{itm_pcr_oi}")
+      st.write(f"itm_pcr_oi_chng :{itm_pcr_oi_chng}")
+      st.write(f"net_premium_oi :{net_premium_oi}")
+      st.write(f"net_premium_oi_change :{net_premium_oi_change}")
+      
+    else:
+        if itm_pcr_oi < 1 and itm_ce_oi_chng > 0 and itm_pe_oi_chng < 0 and net_premium_oi > 0  and net_premium_oi_change > 0:
+          signal = "BUY"
+        elif itm_pcr_oi > 1 and itm_ce_oi_chng < 0 and itm_pe_oi_chng>0 and net_premium_oi < 0 and  net_premium_oi_change < 0:
+          signal = "SELL"
+        else:
+        signal="SIDEWAYS"
+        
+        st.write(f"itm_pcr_oi :{itm_pcr_oi}")
+        st.write(f"itm_ce_oi_chng :{itm_ce_oi_chng}")
+        st.write(f"itm_pe_oi_chng :{itm_pe_oi_chng}")
+        st.write(f"net_premium_oi :{net_premium_oi}")
+        st.write(f"net_premium_oi_change :{net_premium_oi_change}")
 
     return signal
 
