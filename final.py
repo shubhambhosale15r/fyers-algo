@@ -121,9 +121,9 @@ def compute_signals(merged_df, atm_strike,ltp):
     syn_spot = atm_strike + atm_ce_price - atm_pe_price
     put_call_parity=""
     if syn_spot > ltp: # here ltp is current underlying price
-        put_call_parity="BUY"
-    elif syn_spot < ltp:
         put_call_parity="SELL"
+    elif syn_spot < ltp:
+        put_call_parity="BUY"
     else:
         put_call_parity="SIDEWAYS"
     
