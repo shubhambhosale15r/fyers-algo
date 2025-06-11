@@ -192,9 +192,9 @@ def compute_signals(merged_df, atm_strike,ltp):
         # st.write(f"ITM PCR Volume: {itm_pcr_vol:.4f} (PE ITM Volume: {itm_pe_vol}, CE ITM Volume: {itm_ce_vol})")
         # st.write(f"OTM PCR Volume: {otm_pcr_vol:.4f} (PE OTM Volume: {otm_pe_vol}, CE OTM Volume: {otm_ce_vol})")
         if otm_pe_oi_chng > otm_ce_oi_chng:
-            st.write("More otm pe oi change compared to ce")
+            st.write("More OTM PE OI Change compared to CE")
         elif otm_ce_oi_chng >  otm_pe_oi_chng:
-            st.write("More otm ce oi change compared to pe")
+            st.write("More OTM CE OI Change compared to PE")
 
     return signal
 
