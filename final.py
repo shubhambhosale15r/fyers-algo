@@ -121,16 +121,16 @@ def compute_signals(merged_df, atm_strike,ltp):
 
     # Now you can use atm_strike, ce_price, and pe_price 
     # put call parity
-    syn_spot = atm_strike + atm_ce_price - atm_pe_price
-    put_call_parity=""
-    if syn_spot > ltp: # here ltp is current underlying price
-        put_call_parity="SELL"
-    elif syn_spot < ltp:
-        put_call_parity="BUY"
-    else:
-        put_call_parity="SIDEWAYS"
+    # syn_spot = atm_strike + atm_ce_price - atm_pe_price
+    # put_call_parity=""
+    # if syn_spot > ltp: # here ltp is current underlying price
+    #     put_call_parity="SELL"
+    # elif syn_spot < ltp:
+    #     put_call_parity="BUY"
+    # else:
+    #     put_call_parity="SIDEWAYS"
     
-    st.write(f"Put Call Parity: {put_call_parity} ,Syn Spot: {syn_spot:.2f}, Spot Price: {ltp}, ATM Strike: {atm_strike}, CE Price: {atm_ce_price:.2f}, PE Price: {atm_pe_price:.2f}")
+    st.write(f"Spot Price: {ltp}, ATM Strike: {atm_strike}, CE Price: {atm_ce_price:.2f}, PE Price: {atm_pe_price:.2f}")
 
     
     # Identify ITM strikes (3 closest below ATM for CE, above ATM for PE)
@@ -170,9 +170,9 @@ def compute_signals(merged_df, atm_strike,ltp):
         otm_pcr_chng = otm_pe_oi_chng  / otm_ce_oi_chng  
 
         # Generate signals based on PCR values
-        if itm_pcr_chng < 1 and otm_pcr_chng > 1 and itm_pcr_vol < 1 and otm_pcr_vol > 1 and put_call_parity == "BUY":
+        if itm_pcr_chng < 1 and otm_pcr_chng > 1 and itm_pcr_vol < 1 and otm_pcr_vol > 1 and atm_pe_price > atm_ce_price:
             signal = "BUY"
-        elif itm_pcr_chng > 1 and otm_pcr_chng < 1 and itm_pcr_vol > 1 and otm_pcr_vol < 1 and put_call_parity == "SELL":
+        elif itm_pcr_chng > 1 and otm_pcr_chng < 1 and itm_pcr_vol > 1 and otm_pcr_vol < 1 and atm_ce_price > atm_pe_price:
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
@@ -181,9 +181,9 @@ def compute_signals(merged_df, atm_strike,ltp):
         st.write(f"ITM PCR Volume: {itm_pcr_vol:.4f} (PE ITM Volume: {itm_pe_vol}, CE ITM Volume: {itm_ce_vol})")
         st.write(f"OTM PCR Volume: {otm_pcr_vol:.4f} (PE OTM Volume: {otm_pe_vol}, CE OTM Volume: {otm_ce_vol})")
     else:
-        if itm_pe_oi_chng < 0 and itm_ce_oi_chng > 0 and otm_pe_oi_chng > 0 and otm_pe_oi_chng > otm_ce_oi_chng and itm_pcr_vol < 1 and otm_pcr_vol > 1 and put_call_parity == "BUY":
+        if itm_pe_oi_chng < 0 and itm_ce_oi_chng > 0 and otm_pe_oi_chng > 0 and otm_pe_oi_chng > otm_ce_oi_chng and itm_pcr_vol < 1 and otm_pcr_vol > 1 and atm_pe_price > atm_ce_price:
             signal = "BUY"
-        elif itm_pe_oi_chng > 0 and itm_ce_oi_chng < 0 and otm_ce_oi_chng > 0 and otm_ce_oi_chng > otm_pe_oi_chng and itm_pcr_vol > 1 and otm_pcr_vol < 1 and put_call_parity == "SELL":
+        elif itm_pe_oi_chng > 0 and itm_ce_oi_chng < 0 and otm_ce_oi_chng > 0 and otm_ce_oi_chng > otm_pe_oi_chng and itm_pcr_vol > 1 and otm_pcr_vol < 1 and atm_ce_price > atm_pe_price:
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
