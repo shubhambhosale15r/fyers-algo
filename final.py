@@ -119,8 +119,8 @@ def compute_signals(merged_df, atm_strike,ltp):
         ce_price = None
         pe_price = None
 
-    Now you can use atm_strike, ce_price, and pe_price 
-    put call parity
+    # Now you can use atm_strike, ce_price, and pe_price 
+    # put call parity
     syn_spot = atm_strike + atm_ce_price - atm_pe_price
     put_call_parity=""
     if syn_spot > ltp: # here ltp is current underlying price
