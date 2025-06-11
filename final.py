@@ -119,7 +119,7 @@ def compute_signals(merged_df, atm_strike,ltp):
         ce_price = None
         pe_price = None
 
-    st.write(f"CE Price: {atm_ce_price:.2f}, PE Price: {atm_pe_price:.2f}")
+    # st.write(f"CE Price: {atm_ce_price:.2f}, PE Price: {atm_pe_price:.2f}")
     
     # Identify ITM strikes (3 closest below ATM for CE, above ATM for PE)
     ce_itm_strikes = []
@@ -168,9 +168,9 @@ def compute_signals(merged_df, atm_strike,ltp):
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
-        st.write(f"ITM PCR OI Chng: {itm_pcr_chng:.4f} (PE ITM OI Chng: {itm_pe_oi_chng}, CE ITM OI Chng: {itm_ce_oi_chng})")
-        st.write(f"ITM CE LTP :{itm_ce_price}  ITM PE LTP :{itm_pe_price}")
-        # st.write(f"ITM PCR Volume: {itm_pcr_oi:.4f} (PE ITM Volume: {itm_pe_oi}, CE ITM Volume: {itm_ce_oi})")
+        st.write(f"ITM PCR OI Chng: {itm_pcr_chng:.2f} (PE ITM OI Chng: {itm_pe_oi_chng:.2f}, CE ITM OI Chng: {itm_ce_oi_chng:.2f})")
+        st.write(f"ITM CE LTP :{itm_ce_price:.2f}  ITM PE LTP :{itm_pe_price:.2f}")
+        # st.write(f"ITM PCR OI: {itm_pcr_oi:.2f} (PE ITM OI: {itm_pe_oi:.2f}, CE ITM OI: {itm_ce_oi:.2f})")
    
     else:
         if itm_pe_oi_chng < 0 and itm_ce_oi_chng > 0  and itm_pe_price > itm_ce_price:   
@@ -179,9 +179,9 @@ def compute_signals(merged_df, atm_strike,ltp):
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
-        st.write(f"(PE ITM OI Chng: {itm_pe_oi_chng}, CE ITM OI Chng: {itm_ce_oi_chng})")
-        st.write(f"ITM CE LTP :{itm_ce_price}  ITM PE LTP :{itm_pe_price}")
-        # st.write(f"ITM PCR Volume: {itm_pcr_oi:.4f} (PE ITM Volume: {itm_pe_oi}, CE ITM Volume: {itm_ce_oi})")
+        st.write(f"(PE ITM OI Chng: {itm_pe_oi_chng:.2f}, CE ITM OI Chng: {itm_ce_oi_chng:.2f})")
+        st.write(f"ITM CE LTP :{itm_ce_price:.2f}  ITM PE LTP :{itm_pe_price:.2f}")
+        # st.write(f"ITM PCR OI: {itm_pcr_oi:.2f} (PE ITM OI: {itm_pe_oi:.2f}, CE ITM OI: {itm_ce_oi:.2f})")
 
     return signal
 
