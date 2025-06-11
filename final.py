@@ -143,14 +143,14 @@ def compute_signals(merged_df, atm_strike,ltp):
     otm_pe_oi_chng = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_OICh"].sum()
     otm_ce_oi_chng = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OICh"].sum()
 
-    # #Compute PCR Vol for ITM and OTM
-    # itm_pe_vol = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_Vol"].sum()
-    # itm_ce_vol = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_Vol"].sum()
-    # otm_pe_vol = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_Vol"].sum()
-    # otm_ce_vol = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_Vol"].sum()
-    # if itm_pe_vol !=0 and itm_ce_vol !=0 and otm_pe_vol !=0 and otm_ce_vol !=0:
-    #     itm_pcr_vol = itm_pe_vol / itm_ce_vol
-    #     otm_pcr_vol = otm_pe_vol / otm_ce_vol
+    # #Compute PCR OI for ITM and OTM
+    # itm_pe_oi = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OI"].sum()
+    # itm_ce_oi = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OI"].sum()
+    # otm_pe_oi = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_OI"].sum()
+    # otm_ce_oi = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OI"].sum()
+    # if itm_pe_oi !=0 and itm_ce_oi !=0 and otm_pe_oi !=0 and otm_ce_oi !=0:
+    #     itm_pcr_oi = itm_pe_oi / itm_ce_oi
+    #     otm_pcr_oi = otm_pe_oi / otm_ce_oi
 
         # #Compute PCR Vol for ITM and OTM
     itm_pe_price = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
@@ -160,8 +160,7 @@ def compute_signals(merged_df, atm_strike,ltp):
     # Avoid division by zero
     if itm_pe_oi_chng > 0 and itm_ce_oi_chng > 0  :
         itm_pcr_chng = itm_pe_oi_chng / itm_ce_oi_chng 
-        # otm_pcr_chng = otm_pe_oi_chng  / otm_ce_oi_chng  
-
+        
         # Generate signals based on PCR values
         if itm_pcr_chng < 1  and itm_pe_price > itm_ce_price:
             signal = "BUY"
@@ -171,9 +170,8 @@ def compute_signals(merged_df, atm_strike,ltp):
             signal = "SIDEWAYS"
         st.write(f"ITM PCR OI Chng: {itm_pcr_chng:.4f} (PE ITM OI Chng: {itm_pe_oi_chng}, CE ITM OI Chng: {itm_ce_oi_chng})")
         st.write(f"ITM CE LTP :{itm_ce_price}  ITM PE LTP :{itm_pe_price}")
-        # st.write(f"OTM PCR OI Chng: {otm_pcr_chng:.4f} (PE OTM OI Chng: {otm_pe_oi_chng}, CE OTM OI Chng: {otm_ce_oi_chng})")
-        # st.write(f"ITM PCR Volume: {itm_pcr_vol:.4f} (PE ITM Volume: {itm_pe_vol}, CE ITM Volume: {itm_ce_vol})")
-        # st.write(f"OTM PCR Volume: {otm_pcr_vol:.4f} (PE OTM Volume: {otm_pe_vol}, CE OTM Volume: {otm_ce_vol})")
+        # st.write(f"ITM PCR Volume: {itm_pcr_oi:.4f} (PE ITM Volume: {itm_pe_oi}, CE ITM Volume: {itm_ce_oi})")
+   
     else:
         if itm_pe_oi_chng < 0 and itm_ce_oi_chng > 0  and itm_pe_price > itm_ce_price:   
             signal = "BUY"
@@ -183,13 +181,7 @@ def compute_signals(merged_df, atm_strike,ltp):
             signal = "SIDEWAYS"
         st.write(f"(PE ITM OI Chng: {itm_pe_oi_chng}, CE ITM OI Chng: {itm_ce_oi_chng})")
         st.write(f"ITM CE LTP :{itm_ce_price}  ITM PE LTP :{itm_pe_price}")
-        # st.write(f"(PE OTM OI Chng: {otm_pe_oi_chng}, CE OTM OI Chng: {otm_ce_oi_chng})")
-        # st.write(f"ITM PCR Volume: {itm_pcr_vol:.4f} (PE ITM Volume: {itm_pe_vol}, CE ITM Volume: {itm_ce_vol})")
-        # st.write(f"OTM PCR Volume: {otm_pcr_vol:.4f} (PE OTM Volume: {otm_pe_vol}, CE OTM Volume: {otm_ce_vol})")
-        # if otm_pe_oi_chng > otm_ce_oi_chng:
-        #     st.write("More OTM PE OI Change compared to CE")
-        # elif otm_ce_oi_chng >  otm_pe_oi_chng:
-        #     st.write("More OTM CE OI Change compared to PE")
+        # st.write(f"ITM PCR Volume: {itm_pcr_oi:.4f} (PE ITM Volume: {itm_pe_oi}, CE ITM Volume: {itm_ce_oi})")
 
     return signal
 
