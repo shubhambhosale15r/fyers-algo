@@ -190,7 +190,7 @@ def compute_signals(merged_df, atm_strike,ltp):
 
 
 def select_strikes_based_on_oi(chain,atm_strike):
- """
+    """
     Modified strike selection logic:
     - For BUY signal: Sell ATM PE and buy OTM PE (~half price of ATM PE)
     - For SELL signal: Sell ATM CE and buy OTM CE (~half price of ATM CE)
