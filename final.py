@@ -287,11 +287,11 @@ def compute_signals(merged_df, atm_strike,ltp):
     return signal
 
 
-def select_strikes_based_on_oi(chain):
-    """
-    Given the raw option chain list of dicts, return:
-    - For BUY signal: (sell_pe_row, buy_pe_row)
-    - For SELL signal: (sell_ce_row, buy_ce_row)
+def select_strikes_based_on_oi(chain,atm_strike):
+ """
+    Modified strike selection logic:
+    - For BUY signal: Sell ATM PE and buy OTM PE (~half price of ATM PE)
+    - For SELL signal: Sell ATM CE and buy OTM CE (~half price of ATM CE)
     """
     df = pd.DataFrame(chain)
     if df.empty:
@@ -300,44 +300,36 @@ def select_strikes_based_on_oi(chain):
     ce = df[df["option_type"] == "CE"].copy()
     pe = df[df["option_type"] == "PE"].copy()
 
-    # Ensure numeric OI change exists
-    pe["oich_numeric"] = pd.to_numeric(pe.get("oich", 0), errors="coerce").fillna(0)
-    ce["oich_numeric"] = pd.to_numeric(ce.get("oich", 0), errors="coerce").fillna(0)
+    # Find ATM options
+    atm_ce = ce[ce["strike_price"] == atm_strike].iloc[0].to_dict() if not ce[ce["strike_price"] == atm_strike].empty else None
+    atm_pe = pe[pe["strike_price"] == atm_strike].iloc[0].to_dict() if not pe[pe["strike_price"] == atm_strike].empty else None
 
-    # SELL_PE: the PE strike with highest increase in OI
-    if not pe.empty:
-        sell_pe_idx = pe["oich_numeric"].idxmax()
-        sell_pe_row = pe.loc[sell_pe_idx].to_dict()
-    else:
-        sell_pe_row = None
+    # Initialize return values
+    sell_pe_row, buy_pe_row, sell_ce_row, buy_ce_row = None, None, None, None
 
-    # SELL_CE: the CE strike with highest increase in OI
-    if not ce.empty:
-        sell_ce_idx = ce["oich_numeric"].idxmax()
-        sell_ce_row = ce.loc[sell_ce_idx].to_dict()
-    else:
-        sell_ce_row = None
+    # For BUY signal (PE spread)
+    if atm_pe:
+        sell_pe_row = atm_pe  # Sell ATM PE
+        target_price = atm_pe["ltp"] / 2
+        
+        # Find OTM PE with price closest to half of ATM PE
+        otm_pe = pe[pe["strike_price"] > atm_strike].copy()
+        if not otm_pe.empty:
+            otm_pe["price_diff"] = abs(otm_pe["ltp"] - target_price)
+            buy_pe_row = otm_pe.nsmallest(1, "price_diff").iloc[0].to_dict()
 
-    # For BUY signal: find a PE with LTP approx half of sell_pe row's LTP
-    buy_pe_row = None
-    if sell_pe_row is not None:
-        target_half = sell_pe_row.get("ltp", 0) / 2
-        pe_candidates = pe.copy()
-        pe_candidates["ltp_diff"] = (pe_candidates["ltp"] - target_half).abs()
-        if not pe_candidates.empty:
-            buy_pe_row = pe_candidates.nsmallest(1, "ltp_diff").iloc[0].to_dict()
-
-    # For SELL signal: find a CE with LTP approx half of sell_ce row's LTP
-    buy_ce_row = None
-    if sell_ce_row is not None:
-        target_half = sell_ce_row.get("ltp", 0) / 2
-        ce_candidates = ce.copy()
-        ce_candidates["ltp_diff"] = (ce_candidates["ltp"] - target_half).abs()
-        if not ce_candidates.empty:
-            buy_ce_row = ce_candidates.nsmallest(1, "ltp_diff").iloc[0].to_dict()
+    # For SELL signal (CE spread)
+    if atm_ce:
+        sell_ce_row = atm_ce  # Sell ATM CE
+        target_price = atm_ce["ltp"] / 2
+        
+        # Find OTM CE with price closest to half of ATM CE
+        otm_ce = ce[ce["strike_price"] > atm_strike].copy()
+        if not otm_ce.empty:
+            otm_ce["price_diff"] = abs(otm_ce["ltp"] - target_price)
+            buy_ce_row = otm_ce.nsmallest(1, "price_diff").iloc[0].to_dict()
 
     return sell_pe_row, buy_pe_row, sell_ce_row, buy_ce_row
-
 
 def cancel_order(fyers, order_id):
     try:
@@ -1018,7 +1010,7 @@ def main():
             })
 
         # Select strikes based on highest OI change and half-price logic
-        sell_pe, buy_pe, sell_ce, buy_ce = select_strikes_based_on_oi(chain)
+        sell_pe, buy_pe, sell_ce, buy_ce = select_strikes_based_on_oi(chain,atm_strike)
 
         # Validate pairs for buy/sell
         valid_buy = (sell_pe is not None and buy_pe is not None)
