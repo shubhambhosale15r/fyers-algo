@@ -164,7 +164,7 @@ def compute_signals(merged_df, atm_strike,ltp):
       
       if itm_pcr_oi < 1 and itm_pcr_oi_chng < 1 :
         signal = "BUY"
-      elif itm_pcr_oi > 1 and itm_pe_oi_chng > 1 :
+      elif itm_pcr_oi > 1 and itm_pcr_oi_chng  > 1 :
         signal = "SELL"
       else:
         signal="SIDEWAYS"
