@@ -162,9 +162,9 @@ def compute_signals(merged_df, atm_strike,ltp):
       itm_pcr_oi_chng = itm_pe_oi_chng / itm_ce_oi_chng 
       
       
-      if itm_pcr_oi < 1 and itm_pcr_oi_chng < 1 :
+      if itm_pcr_oi < 1 and itm_pcr_oi_chng < 1 and ratio <1:
         signal = "BUY"
-      elif itm_pcr_oi > 1 and itm_pcr_oi_chng  > 1 :
+      elif itm_pcr_oi > 1 and itm_pcr_oi_chng  > 1 and ratio >1 :
         signal = "SELL"
       else:
         signal="SIDEWAYS"
@@ -176,9 +176,9 @@ def compute_signals(merged_df, atm_strike,ltp):
       st.write(f"ratio :{ratio}")
       
     else:
-        if itm_pcr_oi < 1 and itm_ce_oi_chng > 0 and itm_pe_oi_chng < 0 :
+        if itm_pcr_oi < 1 and itm_ce_oi_chng > 0 and itm_pe_oi_chng < 0 and ratio <1:
           signal = "BUY"
-        elif itm_pcr_oi > 1 and itm_ce_oi_chng < 0 and itm_pe_oi_chng>0 :
+        elif itm_pcr_oi > 1 and itm_ce_oi_chng < 0 and itm_pe_oi_chng>0 and ratio >1:
           signal = "SELL"
         else:
             signal="SIDEWAYS"
