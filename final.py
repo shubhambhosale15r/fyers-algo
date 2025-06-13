@@ -173,7 +173,7 @@ def compute_signals(merged_df, atm_strike,ltp):
       st.write(f"itm_pcr_oi_chng :{itm_pcr_oi_chng}")
       st.write(f"itm_pe_price :{itm_pe_price}  ,  itm_ce_price :{itm_ce_price}")
       st.write(f"otm_pe_price :{otm_pe_price}  ,  otm_ce_price :{otm_ce_price}")
-      st.wite(f"ratio :{ratio}")
+      st.write(f"ratio :{ratio}")
       
     else:
         if itm_pcr_oi < 1 and itm_ce_oi_chng > 0 and itm_pe_oi_chng < 0 :#and net_premium_oi > 0  and net_premium_oi_change > 0:
@@ -188,7 +188,7 @@ def compute_signals(merged_df, atm_strike,ltp):
         st.write(f"itm_pe_oi_chng :{itm_pe_oi_chng}")
         st.write(f"itm_pe_price :{itm_pe_price}  ,  itm_ce_price :{itm_ce_price}")
         st.write(f"otm_pe_price :{otm_pe_price}  ,  otm_ce_price :{otm_ce_price}")
-        st.wite(f"ratio :{ratio}")
+        st.write(f"ratio :{ratio}")
 
     return signal
 
