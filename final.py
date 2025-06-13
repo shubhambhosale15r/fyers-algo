@@ -931,8 +931,6 @@ def main():
             })
 
         # Select strikes based on highest OI change and half-price logic
-        # Get strikes list from your merged dataframe
-        strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
         
         # Calculate ATM strike
         atm_strike = get_atm_strike(strikes, ltp)
