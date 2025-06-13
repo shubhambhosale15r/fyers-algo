@@ -188,33 +188,52 @@ def compute_signals(merged_df, atm_strike,ltp):
 
     return signal
 
+def get_atm_strike(strikes, ltp):
+    """Calculate ATM strike based on LTP"""
+    if not strikes or ltp is None:
+        return None
+    return min(strikes, key=lambda x: abs(x - ltp))
 
-def select_strikes_based_on_oi(chain,atm_strike):
+
+
+def select_strikes_based_on_oi(chain, atm_strike):
     """
-    Modified strike selection logic:
-    - For BUY signal: Sell ATM PE and buy OTM PE (~half price of ATM PE)
-    - For SELL signal: Sell ATM CE and buy OTM CE (~half price of ATM CE)
+    Selects strikes based on price ratio:
+    - For BUY: Sell ATM PE, Buy OTM PE (~half price)
+    - For SELL: Sell ATM CE, Buy OTM CE (~half price)
     """
+    if not chain or atm_strike is None:
+        return None, None, None, None
+
     df = pd.DataFrame(chain)
     if df.empty:
         return None, None, None, None
 
+    # Separate CE and PE data
     ce = df[df["option_type"] == "CE"].copy()
     pe = df[df["option_type"] == "PE"].copy()
 
-    # Find ATM options
-    atm_ce = ce[ce["strike_price"] == atm_strike].iloc[0].to_dict() if not ce[ce["strike_price"] == atm_strike].empty else None
-    atm_pe = pe[pe["strike_price"] == atm_strike].iloc[0].to_dict() if not pe[pe["strike_price"] == atm_strike].empty else None
+    # Ensure numeric columns
+    for col in ['strike_price', 'ltp']:
+        ce[col] = pd.to_numeric(ce[col], errors='coerce')
+        pe[col] = pd.to_numeric(pe[col], errors='coerce')
 
     # Initialize return values
-    sell_pe_row, buy_pe_row, sell_ce_row, buy_ce_row = None, None, None, None
+    sell_pe_row = buy_pe_row = sell_ce_row = buy_ce_row = None
+
+    # Find ATM options
+    try:
+        atm_ce = ce[ce["strike_price"] == atm_strike].iloc[0].to_dict()
+        atm_pe = pe[pe["strike_price"] == atm_strike].iloc[0].to_dict()
+    except (IndexError, KeyError):
+        return None, None, None, None
 
     # For BUY signal (PE spread)
     if atm_pe:
-        sell_pe_row = atm_pe  # Sell ATM PE
+        sell_pe_row = atm_pe
         target_price = atm_pe["ltp"] / 2
         
-        # Find OTM PE with price closest to half of ATM PE
+        # Find OTM PE (strike > ATM)
         otm_pe = pe[pe["strike_price"] > atm_strike].copy()
         if not otm_pe.empty:
             otm_pe["price_diff"] = abs(otm_pe["ltp"] - target_price)
@@ -222,10 +241,10 @@ def select_strikes_based_on_oi(chain,atm_strike):
 
     # For SELL signal (CE spread)
     if atm_ce:
-        sell_ce_row = atm_ce  # Sell ATM CE
+        sell_ce_row = atm_ce
         target_price = atm_ce["ltp"] / 2
         
-        # Find OTM CE with price closest to half of ATM CE
+        # Find OTM CE (strike > ATM)
         otm_ce = ce[ce["strike_price"] > atm_strike].copy()
         if not otm_ce.empty:
             otm_ce["price_diff"] = abs(otm_ce["ltp"] - target_price)
@@ -912,7 +931,18 @@ def main():
             })
 
         # Select strikes based on highest OI change and half-price logic
-        sell_pe, buy_pe, sell_ce, buy_ce = select_strikes_based_on_oi(chain,atm_strike)
+        # Get strikes list from your merged dataframe
+        strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
+        
+        # Calculate ATM strike
+        atm_strike = get_atm_strike(strikes, ltp)
+        
+        # Only proceed if we have a valid ATM strike
+        if atm_strike is not None:
+            sell_pe, buy_pe, sell_ce, buy_ce = select_strikes_based_on_oi(chain, atm_strike)
+        else:
+            st.warning("Could not determine ATM strike")
+            sell_pe = buy_pe = sell_ce = buy_ce = None
 
         # Validate pairs for buy/sell
         valid_buy = (sell_pe is not None and buy_pe is not None)
