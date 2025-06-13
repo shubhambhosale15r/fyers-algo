@@ -158,22 +158,22 @@ def compute_signals(merged_df, atm_strike,ltp):
       itm_pcr_oi_chng = itm_pe_oi_chng / itm_ce_oi_chng 
       
       
-      if itm_pcr_oi < 1 and itm_pcr_oi_chng < 1 and net_premium_oi > 0 and net_premium_oi_change > 0:
+      if itm_pcr_oi < 1 and itm_pcr_oi_chng < 1 :#and net_premium_oi > 0 and net_premium_oi_change > 0:
         signal = "BUY"
-      elif itm_pcr_oi > 1 and itm_pe_oi_chng > 1 and net_premium_oi < 0 and net_premium_oi_change < 0:
+      elif itm_pcr_oi > 1 and itm_pe_oi_chng > 1 :#and net_premium_oi < 0 and net_premium_oi_change < 0:
         signal = "SELL"
       else:
         signal="SIDEWAYS"
         
       st.write(f"itm_pcr_oi :{itm_pcr_oi}")
       st.write(f"itm_pcr_oi_chng :{itm_pcr_oi_chng}")
-      st.write(f"net_premium_oi :{net_premium_oi}")
-      st.write(f"net_premium_oi_change :{net_premium_oi_change}")
+      # st.write(f"net_premium_oi :{net_premium_oi}")
+      # st.write(f"net_premium_oi_change :{net_premium_oi_change}")
       
     else:
-        if itm_pcr_oi < 1 and itm_ce_oi_chng > 0 and itm_pe_oi_chng < 0 and net_premium_oi > 0  and net_premium_oi_change > 0:
+        if itm_pcr_oi < 1 and itm_ce_oi_chng > 0 and itm_pe_oi_chng < 0 :#and net_premium_oi > 0  and net_premium_oi_change > 0:
           signal = "BUY"
-        elif itm_pcr_oi > 1 and itm_ce_oi_chng < 0 and itm_pe_oi_chng>0 and net_premium_oi < 0 and  net_premium_oi_change < 0:
+        elif itm_pcr_oi > 1 and itm_ce_oi_chng < 0 and itm_pe_oi_chng>0 :#and net_premium_oi < 0 and  net_premium_oi_change < 0:
           signal = "SELL"
         else:
             signal="SIDEWAYS"
@@ -181,8 +181,8 @@ def compute_signals(merged_df, atm_strike,ltp):
         st.write(f"itm_pcr_oi :{itm_pcr_oi}")
         st.write(f"itm_ce_oi_chng :{itm_ce_oi_chng}")
         st.write(f"itm_pe_oi_chng :{itm_pe_oi_chng}")
-        st.write(f"net_premium_oi :{net_premium_oi}")
-        st.write(f"net_premium_oi_change :{net_premium_oi_change}")
+        # st.write(f"net_premium_oi :{net_premium_oi}")
+        # st.write(f"net_premium_oi_change :{net_premium_oi_change}")
 
     return signal
 
