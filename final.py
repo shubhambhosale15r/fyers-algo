@@ -644,7 +644,7 @@ def format_and_show(chain, title, ltp, show_signals=False):
     st.subheader(title)
     if show_signals and atm is not None:
         signal = compute_signals(merged, atm,ltp)
-        st.metric("PCR Signal", signal)  # Show just the PCR signal
+        st.metric("Signal", signal)  # Show just the PCR signal
     styled = merged.style.apply(
         lambda row: ["background:yellow" if row["Strike"] == atm else "" for _ in row],
         axis=1
