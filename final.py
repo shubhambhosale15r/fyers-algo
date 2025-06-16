@@ -214,7 +214,7 @@ def select_strikes_atm_half_price(chain, atm_strike):
     # For BUY: Buy PE with LTP ≈ half ATM PE LTP
     buy_pe_row = None
     if sell_pe_row and "ltp" in sell_pe_row and sell_pe_row["ltp"] > 0:
-        target = sell_pe_row["ltp"] / 2
+        target = sell_pe_row["ltp"] / 4
         pe_candidates = pe.copy()
         pe_candidates = pe_candidates[pe_candidates["strike_price"] != atm_strike]
         pe_candidates["ltp_diff"] = (pe_candidates["ltp"] - target).abs()
