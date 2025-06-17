@@ -145,16 +145,16 @@ def compute_signals(merged_df, atm_strike,ltp):
     itm_pcr_oi=itm_pe_oi/itm_ce_oi
 
     # sum  for ITM prices ce and pe
-    itm_pe_price = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
-    itm_ce_price = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
+    # itm_pe_price = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
+    # itm_ce_price = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
 
-    otm_pe_price =  merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_ltp"].sum()
-    otm_ce_price = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_ltp"].sum()
+    # otm_pe_price =  merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_ltp"].sum()
+    # otm_ce_price = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_ltp"].sum()
 
-    itm_otm_pe_diff = itm_pe_price - otm_pe_price
-    itm_otm_ce_diff = itm_ce_price - otm_ce_price
+    # itm_otm_pe_diff = itm_pe_price - otm_pe_price
+    # itm_otm_ce_diff = itm_ce_price - otm_ce_price
 
-    ratio = itm_otm_pe_diff / itm_otm_ce_diff
+    # ratio = itm_otm_pe_diff / itm_otm_ce_diff
     
     
     # Avoid division by zero
@@ -162,23 +162,23 @@ def compute_signals(merged_df, atm_strike,ltp):
       itm_pcr_oi_chng = itm_pe_oi_chng / itm_ce_oi_chng 
       
       
-      if itm_pcr_oi < 1 and itm_pcr_oi_chng < 1 and ratio <1:
+      if itm_pcr_oi <= 0.5 and itm_pcr_oi_chng <= 0.5:# and ratio <1:
         signal = "BUY"
-      elif itm_pcr_oi > 1 and itm_pcr_oi_chng  > 1 and ratio >1 :
+      elif itm_pcr_oi >= 0.5 and itm_pcr_oi_chng >= 0.5 :#and ratio >1 :
         signal = "SELL"
       else:
         signal="SIDEWAYS"
         
       st.write(f"itm_pcr_oi :{itm_pcr_oi}")
       st.write(f"itm_pcr_oi_chng :{itm_pcr_oi_chng}")
-      st.write(f"itm_pe_price :{itm_pe_price}  ,  itm_ce_price :{itm_ce_price}")
-      st.write(f"otm_pe_price :{otm_pe_price}  ,  otm_ce_price :{otm_ce_price}")
-      st.write(f"ratio :{ratio}")
+      # st.write(f"itm_pe_price :{itm_pe_price}  ,  itm_ce_price :{itm_ce_price}")
+      # st.write(f"otm_pe_price :{otm_pe_price}  ,  otm_ce_price :{otm_ce_price}")
+      # st.write(f"ratio :{ratio}")
       
     else:
-        if itm_pcr_oi < 1 and itm_ce_oi_chng > 0 and itm_pe_oi_chng < 0 and ratio <1:
+        if itm_pcr_oi <=0.5  and itm_ce_oi_chng > 0 and itm_pe_oi_chng < 0 :#and ratio <1:
           signal = "BUY"
-        elif itm_pcr_oi > 1 and itm_ce_oi_chng < 0 and itm_pe_oi_chng>0 and ratio >1:
+        elif itm_pcr_oi <= 0.5 and itm_ce_oi_chng < 0 and itm_pe_oi_chng > 0 :#and ratio >1:
           signal = "SELL"
         else:
             signal="SIDEWAYS"
@@ -186,9 +186,9 @@ def compute_signals(merged_df, atm_strike,ltp):
         st.write(f"itm_pcr_oi :{itm_pcr_oi}")
         st.write(f"itm_ce_oi_chng :{itm_ce_oi_chng}")
         st.write(f"itm_pe_oi_chng :{itm_pe_oi_chng}")
-        st.write(f"itm_pe_price :{itm_pe_price}  ,  itm_ce_price :{itm_ce_price}")
-        st.write(f"otm_pe_price :{otm_pe_price}  ,  otm_ce_price :{otm_ce_price}")
-        st.write(f"ratio :{ratio}")
+        # st.write(f"itm_pe_price :{itm_pe_price}  ,  itm_ce_price :{itm_ce_price}")
+        # st.write(f"otm_pe_price :{otm_pe_price}  ,  otm_ce_price :{otm_ce_price}")
+        # st.write(f"ratio :{ratio}")
 
     return signal
 
