@@ -99,7 +99,15 @@ def get_symbol_ltp(cid, token, symbol):
         st.error(f"Quotes API error for {symbol}: {resp.get('message', 'Unknown')}")
         return None
     return resp["d"][0]["v"]["lp"]
+    
 def compute_signals(merged_df, atm_strike, ltp):
+    # Computing Δbias and Synthetic Forward Deviation
+    # bias = C - P - (S - K)
+    # syn_forward_price = (C - P + K) - S
+    # bias: measures deviation from put-call parity
+    # syn_forward_price: measures market’s implied forward direction
+    # C: Call price    # P: Put price    # K: Strike    # S: Spot price
+
     strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
     try:
         idx = strikes.index(atm_strike)
