@@ -99,99 +99,54 @@ def get_symbol_ltp(cid, token, symbol):
         st.error(f"Quotes API error for {symbol}: {resp.get('message', 'Unknown')}")
         return None
     return resp["d"][0]["v"]["lp"]
-
-def compute_signals(merged_df, atm_strike,ltp):
+def compute_signals(merged_df, atm_strike, ltp):
     strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
     try:
         idx = strikes.index(atm_strike)
     except ValueError:
         st.error(f"ATM strike {atm_strike} not in available strikes")
         return "SIDEWAYS"
-        
-    # ATM Strike and atm ce and atm pe prices
-    atm_row = merged_df[merged_df["Strike"] == atm_strike]
-    if not atm_row.empty:
-        atm_ce_price = atm_row["CE_ltp"].values[0] if "CE_ltp" in atm_row else None
-        atm_pe_price = atm_row["PE_ltp"].values[0] if "PE_ltp" in atm_row else None
-    else:
-        ce_price = None
-        pe_price = None
 
-    # st.write(f"CE Price: {atm_ce_price:.2f}, PE Price: {atm_pe_price:.2f}")
-    
-    # Identify ITM strikes (3 closest below ATM for CE, above ATM for PE)
-    ce_itm_strikes = []
-    pe_itm_strikes = []
-    if idx >= 1:  # Ensure there are strikes below ATM
-        ce_itm_strikes = strikes[max(0, idx-3):idx]  # Up to 3 strikes below ATM
-    if idx < len(strikes) - 1:  # Ensure there are strikes above ATM
-        pe_itm_strikes = strikes[idx+1:min(len(strikes), idx+4)]  # Up to 3 strikes above ATM
+    # Get K1 = ATM-1, K2 = ATM, K3 = ATM+1
+    target_idxs = [idx - 1, idx, idx + 1]
+    selected_strikes = []
+    for i in target_idxs:
+        if i < 0 or i >= len(strikes):
+            continue
+        selected_strikes.append(strikes[i])
 
-    # Identify OTM strikes (3 closest above ATM for CE, below ATM for PE)
-    ce_otm_strikes = []
-    pe_otm_strikes = []
-    if idx < len(strikes) - 1:  # Ensure there are strikes above ATM
-        ce_otm_strikes = strikes[idx+1:min(len(strikes), idx+4)]  # Up to 3 strikes above ATM
-    if idx >= 1:  # Ensure there are strikes below ATM
-        pe_otm_strikes = strikes[max(0, idx-3):idx]  # Up to 3 strikes below ATM
+    bias_list = []
+    for K in selected_strikes:
+        row = merged_df[merged_df["Strike"] == K]
+        if row.empty:
+            continue
+        # Use column names based on your merged_df construction
+        C = row["CE_ltp"].values[0] if "CE_ltp" in row else None
+        P = row["PE_ltp"].values[0] if "PE_ltp" in row else None
+        if C is None or P is None:
+            continue
+        S = ltp  # Spot price
+        bias = C - P - (S - K)
+        bias_list.append(bias)
 
-    # total itm ce and pe oi change
-    itm_pe_oi_chng = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OICh"].sum()
-    itm_ce_oi_chng = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OICh"].sum()
-  
-    # total itm ce and pe oi
-    itm_pe_oi = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OI"].sum()
-    itm_ce_oi = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OI"].sum()
-    itm_pcr_oi=itm_pe_oi/itm_ce_oi
+    if len(bias_list) < 2:
+        st.warning("Not enough strikes to compute Δbias_avg")
+        return "SIDEWAYS"
 
-    # sum  for ITM prices ce and pe
-    itm_pe_price = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
-    itm_ce_price = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
+    delta_bias_avg = sum(bias_list) / len(bias_list)
 
-    otm_pe_price =  merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_ltp"].sum()
-    otm_ce_price = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_ltp"].sum()
+    st.write(f"Δbias values: {bias_list}")
+    st.write(f"Δbias_avg: {delta_bias_avg:.2f}")
 
-    itm_otm_pe_diff = itm_pe_price - otm_pe_price
-    itm_otm_ce_diff = itm_ce_price - otm_ce_price
-
-    ratio = itm_otm_pe_diff / itm_otm_ce_diff
-    
-    
-    # Avoid division by zero
-    if itm_pe_oi_chng > 0 and itm_ce_oi_chng > 0  :
-      itm_pcr_oi_chng = itm_pe_oi_chng / itm_ce_oi_chng 
-      
-      
-      if itm_pcr_oi < 1 and itm_pcr_oi_chng < 1 and ratio <1:
+    # Simple threshold logic for demonstration (customize as needed)
+    if delta_bias_avg > 0.5:
         signal = "BUY"
-      elif itm_pcr_oi > 1 and itm_pcr_oi_chng  > 1 and ratio >1 :
+    elif delta_bias_avg < 0.5:
         signal = "SELL"
-      else:
-        signal="SIDEWAYS"
-        
-      # st.write(f"itm_pcr_oi :{itm_pcr_oi}")
-      # st.write(f"itm_pcr_oi_chng :{itm_pcr_oi_chng}")
-      # st.write(f"itm_pe_price :{itm_pe_price}  ,  itm_ce_price :{itm_ce_price}")
-      # st.write(f"otm_pe_price :{otm_pe_price}  ,  otm_ce_price :{otm_ce_price}")
-      # st.write(f"ratio :{ratio}")
-      
     else:
-        if itm_pcr_oi < 1 and itm_ce_oi_chng > 0 and itm_pe_oi_chng < 0 and ratio <1:
-          signal = "BUY"
-        elif itm_pcr_oi > 1 and itm_ce_oi_chng < 0 and itm_pe_oi_chng>0 and ratio >1:
-          signal = "SELL"
-        else:
-            signal="SIDEWAYS"
-        
-        # st.write(f"itm_pcr_oi :{itm_pcr_oi}")
-        # st.write(f"itm_ce_oi_chng :{itm_ce_oi_chng}")
-        # st.write(f"itm_pe_oi_chng :{itm_pe_oi_chng}")
-        # st.write(f"itm_pe_price :{itm_pe_price}  ,  itm_ce_price :{itm_ce_price}")
-        # st.write(f"otm_pe_price :{otm_pe_price}  ,  otm_ce_price :{otm_ce_price}")
-        # st.write(f"ratio :{ratio}")
+        signal = "SIDEWAYS"
 
     return signal
-
 def select_strikes_atm_half_price(chain, atm_strike):
     """
     For BUY: Sell ATM PE, Buy PE with LTP ≈ half ATM PE LTP
