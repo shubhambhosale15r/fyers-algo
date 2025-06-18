@@ -134,7 +134,7 @@ def compute_signals(merged_df, atm_strike, ltp):
         return "SIDEWAYS"
 
     delta_bias_avg = sum(bias_list) / len(bias_list)
-
+    st.write(f"selected_strikes :{selected_strikes}")
     st.write(f"Δbias values: {bias_list}")
     st.write(f"Δbias_avg: {delta_bias_avg:.2f}")
 
