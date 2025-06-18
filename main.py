@@ -116,6 +116,7 @@ def compute_signals(merged_df, atm_strike, ltp):
         selected_strikes.append(strikes[i])
 
     bias_list = []
+    forward_prices=[]
     for K in selected_strikes:
         row = merged_df[merged_df["Strike"] == K]
         if row.empty:
@@ -129,15 +130,20 @@ def compute_signals(merged_df, atm_strike, ltp):
         S = ltp  # Spot price
         bias = C - P - (S - K)
         bias_list.append(bias)
+        syn_forward_price = (C - P + K) - S
+        forward_prices.append(syn_forward_price)
 
     if len(bias_list) < 2:
         st.warning("Not enough strikes to compute Δbias_avg")
         return "SIDEWAYS"
 
     delta_bias_avg = sum(bias_list) / len(bias_list)
+    forward_prices_avg=sum(forward_prices)/len(forward_prices)
     st.write(f"selected_strikes :{selected_strikes}")
     st.write(f"Δbias values: {bias_list}")
     st.write(f"Δbias_avg: {delta_bias_avg:.2f}")
+    st.write(f"forward prices list :{forward_prices}")
+    st.write(f"forward prices average :{forward_prices_avg}")
 
     # Simple threshold logic for demonstration (customize as needed)
     if delta_bias_avg > 0.5:
