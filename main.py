@@ -123,6 +123,7 @@ def compute_signals(merged_df, atm_strike, ltp):
         # Use column names based on your merged_df construction
         C = row["CE_ltp"].values[0] if "CE_ltp" in row else None
         P = row["PE_ltp"].values[0] if "PE_ltp" in row else None
+        st.write(f"K={K}, C={C}, P={P}, S={ltp}, bias={C-P-(ltp-K) if (C is not None and P is not None) else None}")
         if C is None or P is None:
             continue
         S = ltp  # Spot price
