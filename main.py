@@ -201,7 +201,7 @@ def select_strikes_atm_half_price(chain, atm_strike):
     # For SELL: Buy CE with LTP ≈ half ATM CE LTP
     buy_ce_row = None
     if sell_ce_row and "ltp" in sell_ce_row and sell_ce_row["ltp"] > 0:
-        target = sell_ce_row["ltp"] / 2
+        target = sell_ce_row["ltp"] / 4
         ce_candidates = ce.copy()
         ce_candidates = ce_candidates[ce_candidates["strike_price"] != atm_strike]
         ce_candidates["ltp_diff"] = (ce_candidates["ltp"] - target).abs()
