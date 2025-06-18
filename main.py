@@ -125,6 +125,7 @@ def compute_signals(merged_df, atm_strike, ltp):
         C = row["CE_ltp"].values[0] if "CE_ltp" in row else None
         P = row["PE_ltp"].values[0] if "PE_ltp" in row else None
         #st.write(f"K={K}, C={C}, P={P}, S={ltp}, bias={C-P-(ltp-K) if (C is not None and P is not None) else None}")
+        # st.write(f"K={K}, C={C}, P={P}, S={S}, Δbias={bias:.2f}, Fwd_Dev={syn_forward_price:.2f}")
         if C is None or P is None:
             continue
         S = ltp  # Spot price
@@ -141,9 +142,9 @@ def compute_signals(merged_df, atm_strike, ltp):
     forward_prices_avg=sum(forward_prices)/len(forward_prices)
     st.write(f"selected_strikes :{selected_strikes}")
     st.write(f"Δbias values: {bias_list}")
-    st.write(f"Δbias_avg: {delta_bias_avg:.2f}")
+    st.write(f"Δbias_avg: {round(delta_bias_avg, 2)}")
     st.write(f"forward prices list :{forward_prices}")
-    st.write(f"forward prices average :{forward_prices_avg}")
+    st.write(f"forward prices average: {round(forward_prices_avg, 2)}")
 
     # Simple threshold logic for demonstration (customize as needed)
     if delta_bias_avg > 0 and forward_prices_avg > 0:
