@@ -130,9 +130,9 @@ def compute_signals(merged_df, atm_strike, ltp):
             continue
         S = ltp  # Spot price
         bias = C - P - (S - K)
-        bias_list.append(bias)
+        bias_list.append(round(bias,2))
         syn_forward_price = (C - P + K) - S
-        forward_prices.append(syn_forward_price)
+        forward_prices.append(round(syn_forward_price,2))
 
     if len(bias_list) < 2:
         st.warning("Not enough strikes to compute Δbias_avg")
