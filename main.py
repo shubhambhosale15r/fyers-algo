@@ -108,6 +108,12 @@ def compute_signals(merged_df, atm_strike, ltp):
     # syn_forward_price: measures market’s implied forward direction
     # C: Call price    # P: Put price    # K: Strike    # S: Spot price
 
+    # Recommended Update Intervals 
+    # Timeframe you trade        Ideal update freq
+    # Scalping (<1 min)          15–30 seconds
+    # Intraday 2–15 min          ✅ 3–5 mins
+    # Trend following	           10–15 mins
+    
     strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
     try:
         idx = strikes.index(atm_strike)
@@ -666,7 +672,7 @@ def update_all_data(cid, token, sym, paper_trade_enabled):
 
 def main():
     # --- GLOBAL REFRESH: refresh everything every 60 seconds ---
-    refresh_interval = 10  # in seconds
+    refresh_interval = 180  # in seconds
     st_autorefresh(interval=refresh_interval *1000, key="global_refresh")
     st.title("Fyers Algo Trading")
     
