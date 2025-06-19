@@ -140,14 +140,13 @@ def compute_signals(merged_df, atm_strike, ltp):
         CV = row["CE_Vol"].values[0] if "CE_Vol" in row else None
         P = row["PE_ltp"].values[0] if "PE_ltp" in row else None
         PV = row["PE_Vol"].values[0] if "PE_Vol" in row else None
-        st.write(f"K={K}, C={C}, CV={CV}, P={P},PV={PV}, S={ltp}, bias={(((C*CV)-(P*PV))/(CV+PV))-(ltp-K) }")
+        st.write(f"K={K}, C={C}, CV={CV}, P={P},PV={PV}, S={ltp}, bias={((C*CV)-(P*PV)) / ((C*CV)+(P*PV))}")
 
         if C is None or P is None:
             continue
         S = ltp  # Spot price
-        avg_price = ((C * CV) - (P * PV)) / (CV + PV)
-        delta_bias_vol  = avg_price - (S - K)
-        bias_list.append(round(delta_bias_vol,2))
+        avg_price = ((C * CV) - (P * PV)) / ((C * CV) + (P * PV))
+        bias_list.append(round(avg_price,2))
        
 
     if len(bias_list) < 2:
@@ -160,9 +159,9 @@ def compute_signals(merged_df, atm_strike, ltp):
     st.write(f"Δbias_avg: {round(delta_bias_avg, 2)}")
 
     # Simple threshold logic for demonstration (customize as needed)
-    if delta_bias_avg > 1 :#and forward_prices_avg > 1:
+    if delta_bias_avg > 0.2 :#and forward_prices_avg > 1:
         signal = "BUY"
-    elif delta_bias_avg < -1 :#and forward_prices_avg < -1:
+    elif delta_bias_avg < -0.2 :#and forward_prices_avg < -1:
         signal = "SELL"
     else:
         signal = "SIDEWAYS"
