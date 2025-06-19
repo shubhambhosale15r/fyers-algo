@@ -161,9 +161,9 @@ def compute_signals(merged_df, atm_strike, ltp):
     st.write(f"forward prices average: {round(forward_prices_avg, 2)}")
 
     # Simple threshold logic for demonstration (customize as needed)
-    if delta_bias_avg > 0 and forward_prices_avg > 0:
+    if delta_bias_avg > 1 and forward_prices_avg > 1:
         signal = "BUY"
-    elif delta_bias_avg < 0 and forward_prices_avg < 0:
+    elif delta_bias_avg < -1 and forward_prices_avg < -1:
         signal = "SELL"
     else:
         signal = "SIDEWAYS"
