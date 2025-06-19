@@ -130,35 +130,33 @@ def compute_signals(merged_df, atm_strike, ltp):
         selected_strikes.append(strikes[i])
 
     bias_list = []
-    forward_prices=[]
     for K in selected_strikes:
         row = merged_df[merged_df["Strike"] == K]
         if row.empty:
             continue
         # Use column names based on your merged_df construction
         C = row["CE_ltp"].values[0] if "CE_ltp" in row else None
+        CV = row["CE_Vol"].values[0] if "CE_Vol" in row else None
         P = row["PE_ltp"].values[0] if "PE_ltp" in row else None
+        PV = row["PE_Vol"].values[0] if "PE_Vol" in row else None
         #st.write(f"K={K}, C={C}, P={P}, S={ltp}, bias={C-P-(ltp-K) if (C is not None and P is not None) else None}")
-        # st.write(f"K={K}, C={C}, P={P}, S={S}, Δbias={bias:.2f}, Fwd_Dev={syn_forward_price:.2f}")
+
         if C is None or P is None:
             continue
         S = ltp  # Spot price
-        bias = C - P - (S - K)
-        bias_list.append(round(bias,2))
-        # syn_forward_price = (C - P + K) - S
-        # forward_prices.append(round(syn_forward_price,2))
+        avg_price = ((C * CV) - (P * PV)) / (CV + PV)
+        delta_bias_vol  = avg_price - (S - K)
+        bias_list.append(round(delta_bias_vol,2))
+       
 
     if len(bias_list) < 2:
         st.warning("Not enough strikes to compute Δbias_avg")
         return "SIDEWAYS"
 
     delta_bias_avg = sum(bias_list) / len(bias_list)
-    forward_prices_avg=sum(forward_prices)/len(forward_prices)
     st.write(f"selected_strikes :{selected_strikes}")
     st.write(f"Δbias values: {bias_list}")
     st.write(f"Δbias_avg: {round(delta_bias_avg, 2)}")
-    # st.write(f"forward prices list :{forward_prices}")
-    # st.write(f"forward prices average: {round(forward_prices_avg, 2)}")
 
     # Simple threshold logic for demonstration (customize as needed)
     if delta_bias_avg > 1 :#and forward_prices_avg > 1:
