@@ -10,7 +10,12 @@ import uuid
 from streamlit_autorefresh import st_autorefresh
 
 #setting wide mode as default
-st.set_page_config(layout="wide")
+st.set_page_config(
+    page_title="My App",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="expanded"  # This is the key line
+)
 
 # — SESSION STATE FOR API COUNTERS & RATE LIMIT —
 if "option_chain_api_count" not in st.session_state:
