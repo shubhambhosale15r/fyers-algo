@@ -145,8 +145,8 @@ def compute_signals(merged_df, atm_strike, ltp):
         S = ltp  # Spot price
         bias = C - P - (S - K)
         bias_list.append(round(bias,2))
-        syn_forward_price = (C - P + K) - S
-        forward_prices.append(round(syn_forward_price,2))
+        # syn_forward_price = (C - P + K) - S
+        # forward_prices.append(round(syn_forward_price,2))
 
     if len(bias_list) < 2:
         st.warning("Not enough strikes to compute Δbias_avg")
@@ -157,13 +157,13 @@ def compute_signals(merged_df, atm_strike, ltp):
     st.write(f"selected_strikes :{selected_strikes}")
     st.write(f"Δbias values: {bias_list}")
     st.write(f"Δbias_avg: {round(delta_bias_avg, 2)}")
-    st.write(f"forward prices list :{forward_prices}")
-    st.write(f"forward prices average: {round(forward_prices_avg, 2)}")
+    # st.write(f"forward prices list :{forward_prices}")
+    # st.write(f"forward prices average: {round(forward_prices_avg, 2)}")
 
     # Simple threshold logic for demonstration (customize as needed)
-    if delta_bias_avg > 1 and forward_prices_avg > 1:
+    if delta_bias_avg > 1 :#and forward_prices_avg > 1:
         signal = "BUY"
-    elif delta_bias_avg < -1 and forward_prices_avg < -1:
+    elif delta_bias_avg < -1 :#and forward_prices_avg < -1:
         signal = "SELL"
     else:
         signal = "SIDEWAYS"
