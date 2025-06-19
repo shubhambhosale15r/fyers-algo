@@ -103,6 +103,7 @@ def get_symbol_ltp(cid, token, symbol):
 def compute_signals(merged_df, atm_strike, ltp):
     # Computing Δbias and Synthetic Forward Deviation
     # bias = C - P - (S - K)
+    #volumeavgbias = ( (C* CallVol - P * PutVol) / (CallVol + PutVol) ) -(S - K)
     # syn_forward_price = (C - P + K) - S
     # bias: measures deviation from put-call parity
     # syn_forward_price: measures market’s implied forward direction
@@ -139,7 +140,7 @@ def compute_signals(merged_df, atm_strike, ltp):
         CV = row["CE_Vol"].values[0] if "CE_Vol" in row else None
         P = row["PE_ltp"].values[0] if "PE_ltp" in row else None
         PV = row["PE_Vol"].values[0] if "PE_Vol" in row else None
-        #st.write(f"K={K}, C={C}, P={P}, S={ltp}, bias={C-P-(ltp-K) if (C is not None and P is not None) else None}")
+        st.write(f"K={K}, C={C}, CV={CV}, P={P},PV={PV}, S={ltp}, bias={(((C*CV)-(P*PV))/(CV+PV))-(ltp-K) }")
 
         if C is None or P is None:
             continue
