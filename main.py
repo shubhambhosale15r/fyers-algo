@@ -11,8 +11,8 @@ from streamlit_autorefresh import st_autorefresh
 
 #setting wide mode as default
 st.set_page_config(
-    page_title="My App",
-    page_icon="📈",
+    page_title="Fyers Algo",
+    page_icon="💸",
     layout="wide",
     initial_sidebar_state="expanded"  # This is the key line
 )
