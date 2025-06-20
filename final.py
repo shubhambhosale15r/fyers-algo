@@ -12,6 +12,14 @@ from functools import lru_cache
 import os
 # from dotenv import load_dotenv
 
+
+#setting wide mode as default
+st.set_page_config(
+    page_title="Fyers Algo",
+    page_icon="💸",
+    layout="wide",
+    initial_sidebar_state="expanded"  # This is the key line
+)
 # Constants
 class Config:
     REFRESH_INTERVAL = 60  # seconds
