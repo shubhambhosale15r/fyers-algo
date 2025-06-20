@@ -76,7 +76,7 @@ def init_session_state():
 
 # Load credentials from environment variables
 def load_credentials():
-    load_dotenv()
+    # load_dotenv()
     st.session_state.cid = os.getenv("FYERS_CID", st.session_state.get("cid", ""))
     st.session_state.token = os.getenv("FYERS_TOKEN", st.session_state.get("token", ""))
 
