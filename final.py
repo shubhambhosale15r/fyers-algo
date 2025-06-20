@@ -17,7 +17,7 @@ class Config:
     REFRESH_INTERVAL = 60  # seconds
     API_RATE_LIMIT = 200
     API_WINDOW = 60  # seconds
-    LOT_SIZE = 75
+    LOT_SIZE = 75 
     MAX_RETRIES = 3
     RETRY_DELAY = 2  # seconds
 
@@ -839,9 +839,9 @@ def format_and_show(chain, title, ltp, show_signals=False):
         st.write(f"ITM PE: {itm_pe_price:.2f} | OTM PE: {otm_pe_price:.2f} ")
         st.write("---")
         st.write(f"Ratio: {ratio:.2f}")
-        st.write(f"numerator: {((itm_ce_price * itm_ce_vol) - (otm_ce_price * otm_ce_vol)) - ((itm_pe_price * itm_pe_vol) - (otm_pe_price * otm_pe_vol))}")
-        st.write(f"denominator: {((itm_ce_price * itm_ce_vol) - (otm_ce_price * otm_ce_vol)) + ((itm_pe_price * itm_pe_vol) - (otm_pe_price * otm_pe_vol))}")
-    
+        st.write(f"numerator: {((itm_ce_price * itm_ce_vol) - (otm_ce_price * otm_ce_vol)) - ((itm_pe_price * itm_pe_vol) - (otm_pe_price * itm_pe_vol))}")
+        st.write(f"denominator: {abs(((itm_ce_price * itm_ce_vol) - (otm_ce_price * otm_ce_vol))) + abs(((itm_pe_price * itm_pe_vol) - (otm_pe_price * itm_pe_vol)))}")
+
     # Highlight ATM row in the dataframe
     styled = merged.style.apply(
         lambda row: ["background: yellow" if row["Strike"] == atm else "" for _ in row],
