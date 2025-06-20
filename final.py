@@ -10,7 +10,7 @@ import uuid
 from streamlit_autorefresh import st_autorefresh
 from functools import lru_cache
 import os
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 
 # Constants
 class Config:
