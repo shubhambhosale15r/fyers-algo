@@ -163,15 +163,60 @@ def compute_signals(merged_df, atm_strike, ltp):
     st.write(f"Δbias values: {bias_list}")
     st.write(f"Δbias_avg: {round(delta_bias_avg, 2)}")
 
-    # Simple threshold logic for demonstration (customize as needed)
-    if delta_bias_avg > 0.2 :#and forward_prices_avg > 1:
+
+
+#----------------------------logic2-----------------
+    try:
+        strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
+        idx = strikes.index(atm_strike)
+
+        # ATM Strike and atm ce and atm pe prices
+        atm_row = merged_df[merged_df["Strike"] == atm_strike]
+        atm_ce_price = atm_row["CE_ltp"].values[0] if "CE_ltp" in atm_row else None
+        atm_pe_price = atm_row["PE_ltp"].values[0] if "PE_ltp" in atm_row else None
+
+        # Identify ITM strikes
+        ce_itm_strikes = strikes[max(0, idx-3):idx] if idx >= 1 else []
+        pe_itm_strikes = strikes[idx+1:min(len(strikes), idx+4)] if idx < len(strikes) - 1 else []
+
+        # Identify OTM strikes
+        ce_otm_strikes = strikes[idx+1:min(len(strikes), idx+4)] if idx < len(strikes) - 1 else []
+        pe_otm_strikes = strikes[max(0, idx-3):idx] if idx >= 1 else []
+
+        # Calculate prices
+        itm_pe_price = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
+        itm_ce_price = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
+        otm_pe_price = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_ltp"].sum()
+        otm_ce_price = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_ltp"].sum()
+
+        # Calculate volume
+        itm_pe_vol = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_Vol"].sum()
+        itm_ce_vol = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_Vol"].sum()
+        otm_pe_vol = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_Vol"].sum()
+        otm_ce_vol = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_Vol"].sum()
+
+        # ((C itm * CV) - (c otm * PV)) / ((p itm * CV) - (P otm * PV))
+        # C = itm_ce_price P = itm_pe_price   CV=itm_ce_vol sum PV=itm_pe_vol sum
+
+        numerator = ((itm_ce_price * itm_ce_vol) - (otm_ce_price * otm_ce_vol)) - ((itm_pe_price * itm_pe_vol) - (otm_pe_price * otm_pe_vol))
+        denominator = abs(((itm_ce_price * itm_ce_vol) - (otm_ce_price * otm_ce_vol))) + abs(((itm_pe_price * itm_pe_vol) - (otm_pe_price * otm_pe_vol)))
+
+        ratio = numerator / denominator if denominator != 0 else 0
+
+
+    
+    if delta_bias_avg > 0.2 and ratio > 0.2:
         signal = "BUY"
-    elif delta_bias_avg < -0.2 :#and forward_prices_avg < -1:
+    elif delta_bias_avg < -0.2 and ratio < 0.2:
         signal = "SELL"
     else:
         signal = "SIDEWAYS"
 
     return signal
+
+
+
+
 def select_strikes_atm_half_price(chain, atm_strike):
     """
     For BUY: Sell ATM PE, Buy PE with LTP ≈ half ATM PE LTP
