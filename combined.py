@@ -104,6 +104,7 @@ def get_symbol_ltp(cid, token, symbol):
         st.error(f"Quotes API error for {symbol}: {resp.get('message', 'Unknown')}")
         return None
     return resp["d"][0]["v"]["lp"]
+    
 
 def compute_signals(merged_df, atm_strike, ltp):
     # Computing Δbias and Synthetic Forward Deviation
@@ -166,42 +167,42 @@ def compute_signals(merged_df, atm_strike, ltp):
 
 
 #----------------------------logic2-----------------
-    try:
-        strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
-        idx = strikes.index(atm_strike)
+
+    strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
+    idx = strikes.index(atm_strike)
 
         # ATM Strike and atm ce and atm pe prices
-        atm_row = merged_df[merged_df["Strike"] == atm_strike]
-        atm_ce_price = atm_row["CE_ltp"].values[0] if "CE_ltp" in atm_row else None
-        atm_pe_price = atm_row["PE_ltp"].values[0] if "PE_ltp" in atm_row else None
+    atm_row = merged_df[merged_df["Strike"] == atm_strike]
+    atm_ce_price = atm_row["CE_ltp"].values[0] if "CE_ltp" in atm_row else None
+    atm_pe_price = atm_row["PE_ltp"].values[0] if "PE_ltp" in atm_row else None
 
         # Identify ITM strikes
-        ce_itm_strikes = strikes[max(0, idx-3):idx] if idx >= 1 else []
-        pe_itm_strikes = strikes[idx+1:min(len(strikes), idx+4)] if idx < len(strikes) - 1 else []
+    ce_itm_strikes = strikes[max(0, idx-3):idx] if idx >= 1 else []
+    pe_itm_strikes = strikes[idx+1:min(len(strikes), idx+4)] if idx < len(strikes) - 1 else []
 
         # Identify OTM strikes
-        ce_otm_strikes = strikes[idx+1:min(len(strikes), idx+4)] if idx < len(strikes) - 1 else []
-        pe_otm_strikes = strikes[max(0, idx-3):idx] if idx >= 1 else []
+    ce_otm_strikes = strikes[idx+1:min(len(strikes), idx+4)] if idx < len(strikes) - 1 else []
+    pe_otm_strikes = strikes[max(0, idx-3):idx] if idx >= 1 else []
 
         # Calculate prices
-        itm_pe_price = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
-        itm_ce_price = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
-        otm_pe_price = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_ltp"].sum()
-        otm_ce_price = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_ltp"].sum()
+    itm_pe_price = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
+    itm_ce_price = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
+    otm_pe_price = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_ltp"].sum()
+    otm_ce_price = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_ltp"].sum()
 
-        # Calculate volume
-        itm_pe_vol = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_Vol"].sum()
-        itm_ce_vol = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_Vol"].sum()
-        otm_pe_vol = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_Vol"].sum()
-        otm_ce_vol = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_Vol"].sum()
+     # Calculate volume
+    itm_pe_vol = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_Vol"].sum()
+    itm_ce_vol = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_Vol"].sum()
+    otm_pe_vol = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_Vol"].sum()
+    otm_ce_vol = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_Vol"].sum()
 
         # ((C itm * CV) - (c otm * PV)) / ((p itm * CV) - (P otm * PV))
-        # C = itm_ce_price P = itm_pe_price   CV=itm_ce_vol sum PV=itm_pe_vol sum
+            # C = itm_ce_price P = itm_pe_price   CV=itm_ce_vol sum PV=itm_pe_vol sum
 
-        numerator = ((itm_ce_price * itm_ce_vol) - (otm_ce_price * otm_ce_vol)) - ((itm_pe_price * itm_pe_vol) - (otm_pe_price * otm_pe_vol))
-        denominator = abs(((itm_ce_price * itm_ce_vol) - (otm_ce_price * otm_ce_vol))) + abs(((itm_pe_price * itm_pe_vol) - (otm_pe_price * otm_pe_vol)))
+    numerator = ((itm_ce_price * itm_ce_vol) - (otm_ce_price * otm_ce_vol)) - ((itm_pe_price * itm_pe_vol) - (otm_pe_price * otm_pe_vol))
+    denominator = abs(((itm_ce_price * itm_ce_vol) - (otm_ce_price * otm_ce_vol))) + abs(((itm_pe_price * itm_pe_vol) - (otm_pe_price * otm_pe_vol)))
 
-        ratio = numerator / denominator if denominator != 0 else 0
+    ratio = numerator / denominator if denominator != 0 else 0
 
 
     
@@ -213,10 +214,6 @@ def compute_signals(merged_df, atm_strike, ltp):
         signal = "SIDEWAYS"
 
     return signal
-
-
-
-
 def select_strikes_atm_half_price(chain, atm_strike):
     """
     For BUY: Sell ATM PE, Buy PE with LTP ≈ half ATM PE LTP
@@ -432,23 +429,23 @@ def update_paper_positions(trade):
         # Close position
         if symbol in st.session_state.paper_positions:
             position = st.session_state.paper_positions[symbol]
-
+            
             # Calculate PnL
             if position["action"] == "BUY":  # Long position
                 pnl = (trade["price"] - position["entry_price"]) * position["qty"]
             else:  # Short position
                 pnl = (position["entry_price"] - trade["price"]) * position["qty"]
-
+                
             # Update realized PnL
             st.session_state.paper_pnl["realized"] += pnl
-
+            
             # Record closing trade with PnL
             trade["pnl"] = pnl
-
+            
             # Remove position
             del st.session_state.paper_positions[symbol]
             st.write(f"[PAPER] Closed {position['action']} position for {symbol}. PnL: {pnl:.2f}")
-
+            
             # Update last signal if position is closed
             if not st.session_state.paper_positions:
                 st.session_state["last_signal"] = None
@@ -460,7 +457,7 @@ def update_unrealized_pnl(cid, token):
     if not st.session_state.paper_positions:
         st.session_state.paper_pnl["unrealized"] = 0.0
         return
-
+        
     total_unrealized = 0.0
     for symbol, position in st.session_state.paper_positions.items():
         # Get current LTP for the symbol
@@ -468,25 +465,25 @@ def update_unrealized_pnl(cid, token):
         if ltp is None:
             # If we can't get current price, use last known price
             ltp = position.get("current_price", position["entry_price"])
-
+        
         # Update current price
         position["current_price"] = ltp
-
+        
         # Calculate position PnL
         if position["action"] == "BUY":  # Long position
             pnl = (ltp - position["entry_price"]) * position["qty"]
         else:  # Short position
             pnl = (position["entry_price"] - ltp) * position["qty"]
-
+            
         total_unrealized += pnl
-
+    
     st.session_state.paper_pnl["unrealized"] = total_unrealized
     st.session_state.pnl_update_time = datetime.now()
 
 def update_position_prices(cid, token):
     if not st.session_state.paper_positions:
         return
-
+        
     for symbol, position in st.session_state.paper_positions.items():
         ltp = get_symbol_ltp(cid, token, symbol)
         if ltp is not None:
@@ -535,3 +532,437 @@ def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers)
             })
             orders.append({
                 "symbol": sell_ce["symbol"], 
+                "qty": lot, 
+                "type": 2, 
+                "side": -1,  # Sell CE
+                "productType": "MARGIN",
+                "validity": "DAY"
+            })
+            st.write(f"[LIVE] BUY {buy_ce['symbol']} & SELL {sell_ce['symbol']}")
+
+    # Case 2: SELL → BUY (Exit SELL, Enter BUY)
+    elif current_signal == "SELL" and signal == "BUY":
+        # Exit all SELL positions first
+        try:
+            positions = fyers.positions().get("netPositions", [])
+            for p in positions:
+                if p.get("segment") == "NFO" and p.get("qty") != 0:
+                    side = -1 if p["qty"] > 0 else 1  # Reverse position
+                    orders.append({
+                        "symbol": p["symbol"],
+                        "qty": abs(int(p["qty"])),
+                        "type": 2,  # Market order
+                        "side": side,
+                        "productType": "MARGIN",
+                        "validity": "DAY"
+                    })
+            st.write("[LIVE] Exiting SELL positions for BUY signal")
+        except Exception as e:
+            st.error(f"Failed to exit positions: {e}")
+            return []
+
+        # Enter BUY basket (Buy PE half-price & Sell PE ATM)
+        if buy_pe and sell_pe:
+            orders.append({
+                "symbol": buy_pe["symbol"], 
+                "qty": lot, 
+                "type": 2, 
+                "side": 1,  # Buy PE
+                "productType": "MARGIN",
+                "validity": "DAY"
+            })
+            orders.append({
+                "symbol": sell_pe["symbol"], 
+                "qty": lot, 
+                "type": 2, 
+                "side": -1,  # Sell PE
+                "productType": "MARGIN",
+                "validity": "DAY"
+            })
+            st.write(f"[LIVE] BUY {buy_pe['symbol']} & SELL {sell_pe['symbol']}")
+
+    # Case 3: New signal (no existing position)
+    elif current_signal is None and signal in ["BUY", "SELL"]:
+        if signal == "BUY" and buy_pe and sell_pe:
+            orders.append({
+                "symbol": buy_pe["symbol"], 
+                "qty": lot, 
+                "type": 2, 
+                "side": 1,  # Buy PE
+                "productType": "MARGIN",
+                "validity": "DAY"
+            })
+            orders.append({
+                "symbol": sell_pe["symbol"], 
+                "qty": lot, 
+                "type": 2, 
+                "side": -1,  # Sell PE
+                "productType": "MARGIN",
+                "validity": "DAY"
+            })
+            st.write(f"[LIVE] BUY {buy_pe['symbol']} & SELL {sell_pe['symbol']}")
+        elif signal == "SELL" and buy_ce and sell_ce:
+            orders.append({
+                "symbol": buy_ce["symbol"], 
+                "qty": lot, 
+                "type": 2, 
+                "side": 1,  # Buy CE
+                "productType": "MARGIN",
+                "validity": "DAY"
+            })
+            orders.append({
+                "symbol": sell_ce["symbol"], 
+                "qty": lot, 
+                "type": 2, 
+                "side": -1,  # Sell CE
+                "productType": "MARGIN",
+                "validity": "DAY"
+            })
+            st.write(f"[LIVE] BUY {buy_ce['symbol']} & SELL {sell_ce['symbol']}")
+
+    # Case 4: SIDEWAYS (do nothing)
+    elif signal == "SIDEWAYS":
+        st.write("[LIVE] SIDEWAYS: Holding positions")
+        return []
+
+    # Execute orders
+    placed_ids = []
+    for order in orders:
+        oid, status = place_order_and_check(fyers, order)
+        if oid is None or status in [1, 5]:  # Rejected/Canceled
+            st.error(f"Order failed: {order['symbol']}")
+            # Cancel all pending orders
+            for pid in placed_ids:
+                cancel_order(fyers, pid)
+            return []
+        placed_ids.append(oid)
+
+    # Update last_signal if successful
+    if placed_ids:
+        st.session_state["last_signal"] = signal
+        st.success(f"[LIVE] {signal} basket executed!")
+    
+    return placed_ids
+
+def format_and_show(chain, title, ltp, show_signals=False):
+    df = pd.DataFrame(chain)
+    if df.empty:
+        st.info(f"No data for {title}")
+        return None, None
+    ce = df[df["option_type"] == "CE"]
+    pe = df[df["option_type"] == "PE"]
+    cols = ["symbol", "strike_price", "oi", "volume", "ltp", "ask", "bid", "ltpch", "ltpchp", "oich", "oichp", "prev_oi"]
+    ce_df = ce[cols].rename(columns={"strike_price": "Strike", "oi": "OI", "volume": "Vol", "ltpch": "LTPCh", "ltpchp": "LTPChP", "oich": "OICh", "oichp": "OIChP", "prev_oi": "PrevOI"})
+    pe_df = pe[cols].rename(columns={"strike_price": "Strike", "oi": "OI", "volume": "Vol", "ltpch": "LTPCh", "ltpchp": "LTPChP", "oich": "OICh", "oichp": "OIChP", "prev_oi": "PrevOI"})
+    merged = pd.merge(
+        ce_df.add_prefix("CE_"),
+        pe_df.add_prefix("PE_"),
+        left_on="CE_Strike", right_on="PE_Strike",
+        how="outer"
+    ).rename(columns={"CE_Strike": "Strike"}).drop("PE_Strike", axis=1)
+    atm = None
+    if ltp is not None and not merged["Strike"].dropna().empty:
+        atm = min(merged["Strike"].dropna(), key=lambda x: abs(x - ltp))
+    st.subheader(title)
+    if show_signals and atm is not None:
+        signal = compute_signals(merged, atm,ltp)
+        st.metric("Signal", signal)  # Show just the PCR signal
+    styled = merged.style.apply(
+        lambda row: ["background:yellow" if row["Strike"] == atm else "" for _ in row],
+        axis=1
+    )
+    st.dataframe(styled)
+    st.caption(f"ATM: {atm} • LTP: {ltp}")
+    if show_signals and atm is not None:
+        return signal, atm
+    return None, atm
+
+def update_all_data(cid, token, sym, paper_trade_enabled):
+    """
+    Update all necessary data at once:
+    - Underlying LTP
+    - Option chain for current expiry
+    - Paper trading position prices and unrealized PnL (if enabled)
+    Returns tuple: (ltp, chain, current_expiry_date)
+    """
+    # Fetch expiry data once
+    fy = fyersModel.FyersModel(client_id=cid, token=token, is_async=False, log_path="")
+    enforce_rate_limit()
+    st.session_state["option_chain_api_count"] = st.session_state.get("option_chain_api_count", 0) + 1
+
+    meta = fy.optionchain(data={"symbol": sym, "timestamp": ""})
+    if meta.get("code") != 200:
+        st.error("Failed to fetch expiry data")
+        return None, None, None
+
+    exp = sorted([(e["date"], e.get("expiry")) for e in meta["data"]["expiryData"]],
+                 key=lambda x: datetime.strptime(x[0], "%d-%m-%Y"))
+    today = datetime.today().date()
+    dates = [datetime.strptime(d, "%d-%m-%Y").date() for d, _ in exp]
+    idx = next((i for i, d in enumerate(dates) if d >= today), 0)
+    curr_date, curr_ts = exp[idx]
+
+    # Get underlying LTP
+    ltp = get_underlying_ltp(cid, token, sym)
+
+    # Get option chain data
+    chain = get_option_chain_data(cid, token, sym, expiry_ts=curr_ts)
+
+    # Update paper trading info if enabled
+    if paper_trade_enabled and st.session_state.get("paper_positions"):
+        update_position_prices(cid, token)
+        update_unrealized_pnl(cid, token)
+
+    return ltp, chain, curr_date
+
+def main():
+    # --- GLOBAL REFRESH: refresh everything every 60 seconds ---
+    refresh_interval = 60  # in seconds
+    st_autorefresh(interval=refresh_interval *1000, key="global_refresh")
+    st.title("Fyers Algo Trading")
+    
+    # Initialize session state
+    if "cid" not in st.session_state:
+        st.session_state.cid = ""
+    if "token" not in st.session_state:
+        st.session_state.token = ""
+    if "signal_history" not in st.session_state:
+        st.session_state.signal_history = []
+
+    # Settings sidebar
+    with st.sidebar:
+        st.subheader("⚙️ Trading Settings")
+        auto_trade = st.checkbox("Enable Auto Trade", value=False)
+        paper_trade = st.checkbox("📝 Enable Paper Trading", value=False)
+
+        # Navigation buttons
+        st.subheader("📊 Navigation")
+        if st.button("📈 Signal History"):
+            st.session_state.page = "signal_history"
+        if st.button("🔙 Back to Trading"):
+            st.session_state.page = "trading"
+        if paper_trade:
+            if st.button("📊 Paper Trading Dashboard"):
+                st.session_state.page = "paper_trading"
+
+        st.subheader("🔐 API Credentials")
+        cid = st.text_input("Client ID", value=st.session_state.cid)
+        token = st.text_input("Access Token", type="password", value=st.session_state.token)
+        # sym = st.text_input("Symbol (e.g. NSE:NIFTY50-INDEX)", "NSE:NIFTY50-INDEX")
+        sym=st.selectbox('Choose Index: ',['NSE:NIFTY50-INDEX'])
+        st.write(f'You selected: {sym}')
+
+        # Store credentials
+        st.session_state.cid = cid
+        st.session_state.token = token
+
+        # API usage display
+        st.subheader("📊 API Usage")
+        oc = st.session_state.get("option_chain_api_count", 0)
+        qc = st.session_state.get("quote_api_count", 0)
+        st.write(f"Option Chain API: {oc}")
+        st.write(f"Quote API: {qc}")
+        st.write(f"Total: {oc + qc}/200 per minute")
+
+    # Initialize page state
+    if "page" not in st.session_state:
+        st.session_state.page = "trading"
+
+    # Return early if no credentials/symbol
+    if not (cid and token and sym):
+        st.info("Enter credentials in the sidebar.")
+        return
+
+    # Update all data once per refresh
+    ltp, chain, curr_date = update_all_data(cid, token, sym, paper_trade)
+
+    ist = pytz.timezone("Asia/Kolkata")
+    st.write(f"🕒 Updated: {datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S')}")
+
+    if ltp:
+        st.success(f"📊 Underlying LTP: {ltp}")
+
+    # Routing to pages
+    if st.session_state.page == "signal_history":
+        show_signal_history()
+        return
+
+    if st.session_state.page == "paper_trading" and paper_trade:
+        show_paper_trading_page(cid, token)
+        return
+
+    # Main trading page
+    st.subheader("📈 Live Trading")
+
+    if chain:
+        signal, atm = format_and_show(chain, f"Current Expiry: {curr_date}", ltp, show_signals=True)
+
+        # Record signal history
+        if signal and ltp:
+            timestamp = datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S")
+            st.session_state.signal_history.append({
+                "timestamp": timestamp,
+                "signal": signal,
+                "underlying_ltp": ltp,
+                "expiry_date": curr_date
+            })
+
+        # Select strikes with ATM logic
+        sell_pe, buy_pe, sell_ce, buy_ce = select_strikes_atm_half_price(chain, atm)
+
+        # Validate pairs for buy/sell
+        valid_buy = (sell_pe is not None and buy_pe is not None)
+        valid_sell = (sell_ce is not None and buy_ce is not None)
+
+        # ---- LIVE FYERS INIT (needed for all auto_trade branches) ----
+        fy = None
+        if auto_trade:
+            fy = fyersModel.FyersModel(client_id=cid, token=token, is_async=False, log_path="")
+
+        if signal == "BUY" and not valid_buy:
+            st.warning("Missing option data for BUY signal. Unable to place trade.")
+        elif signal == "SELL" and not valid_sell:
+            st.warning("Missing option data for SELL signal. Unable to place trade.")
+        elif signal in ("BUY", "SELL"):
+            if paper_trade:
+                st.write(f"📢 Signal detected: {signal} - Attempting paper trade")
+                ids = handle_paper_trade(signal, sell_pe, buy_pe, sell_ce, buy_ce)
+                st.session_state["paper_last_signal_order_ids"] = ids
+            elif auto_trade:
+                if st.session_state.get("live_last_signal") == signal and has_open_orders_for_last_signal(fy):
+                    st.info(f"Basket for {signal} already open.")
+                else:
+                    ids = handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fy)
+                    st.session_state["live_last_signal"] = signal
+                    st.session_state["live_last_signal_order_ids"] = ids
+            else:
+                st.info(f"Auto trade disabled; signal: {signal}.")
+        elif signal == "SIDEWAYS":
+            if paper_trade:
+                handle_paper_trade(signal, sell_pe, buy_pe, sell_ce, buy_ce)
+            elif auto_trade:
+                handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fy)
+            else:
+                st.info("Auto trade disabled; sideways.")
+        else:
+            st.info("No action.")
+
+def show_signal_history():
+    st.subheader("📜 Signal History")
+    ist = pytz.timezone("Asia/Kolkata")
+    st.write(f"🕒 Updated: {datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    
+    if not st.session_state.get("signal_history", []):
+        st.info("No signal history available yet")
+        return
+    
+    # Create and display dataframe
+    history_df = pd.DataFrame(st.session_state.signal_history)
+    history_df = history_df.sort_values("timestamp", ascending=False)
+    
+    # Format the DataFrame for better display
+    formatted_df = history_df.copy()
+    formatted_df["underlying_ltp"] = formatted_df["underlying_ltp"].apply(lambda x: f"₹{x:.2f}" if isinstance(x, (int, float)) else x)
+    
+    st.dataframe(formatted_df)
+    
+    # Download button
+    csv = history_df.to_csv(index=False)
+    st.download_button(
+        label="Download Signal History",
+        data=csv,
+        file_name="signal_history.csv",
+        mime="text/csv"
+    )
+
+def show_paper_trading_page(cid, token):
+    # update the paper trade dashboard @ 30 seconds
+    st.subheader("📝 Paper Trading Dashboard")
+    
+    # Display PnL summary
+    col1, col2, col3 = st.columns(3)
+    col1.metric("💰 Realized PnL", f"₹{st.session_state.paper_pnl['realized']:.2f}")
+    col2.metric("📊 Unrealized PnL", f"₹{st.session_state.paper_pnl['unrealized']:.2f}")
+    total_pnl = st.session_state.paper_pnl['realized'] + st.session_state.paper_pnl['unrealized']
+    col3.metric("💵 Total PnL", f"₹{total_pnl:.2f}", delta=f"{total_pnl:.2f}")
+    
+    ist = pytz.timezone("Asia/Kolkata")
+    st.write(f"🕒 Updated: {datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # Current positions
+    st.subheader("📊 Current Positions")
+    if st.session_state.paper_positions:
+        positions_list = []
+        for symbol, position in st.session_state.paper_positions.items():
+            # Calculate current PnL for each position
+            if position["action"] == "BUY":  # Long position
+                pnl = (position["current_price"] - position["entry_price"]) * position["qty"]
+            else:  # Short position
+                pnl = (position["entry_price"] - position["current_price"]) * position["qty"]
+                
+            positions_list.append({
+                "Symbol": position["symbol"],
+                "Action": position["action"],
+                "Qty": position["qty"],
+                "Entry Price": f"₹{position['entry_price']:.2f}",
+                "Current Price": f"₹{position['current_price']:.2f}",
+                "PnL": f"₹{pnl:.2f}",
+                "Signal": position["signal"]
+            })
+        
+        positions_df = pd.DataFrame(positions_list)
+        st.dataframe(positions_df)
+    else:
+        st.info("No open positions")
+    
+    # Trade history
+    st.subheader("📜 Trade History")
+    if st.session_state.trade_history:
+        history_df = pd.DataFrame(st.session_state.trade_history)
+        
+        # Reorder columns for better readability
+        if not history_df.empty:
+            desired_columns = ["timestamp", "symbol", "action", "qty", "price", "signal", "type", "pnl"]
+            available_columns = [col for col in desired_columns if col in history_df.columns]
+            history_df = history_df[available_columns]
+            
+            # Format timestamp
+            history_df["timestamp"] = pd.to_datetime(history_df["timestamp"])
+            history_df["timestamp"] = history_df["timestamp"].dt.strftime("%Y-%m-%d %H:%M:%S")
+            
+            # Sort by timestamp
+            history_df = history_df.sort_values("timestamp", ascending=False)
+            
+            # Format prices and PnL
+            if "price" in history_df:
+                history_df["price"] = history_df["price"].apply(lambda x: f"₹{x:.2f}" if isinstance(x, (int, float)) else x)
+            if "pnl" in history_df:
+                history_df["pnl"] = history_df["pnl"].apply(lambda x: f"₹{x:.2f}" if isinstance(x, (int, float)) else x)
+        
+        st.dataframe(history_df)
+        
+        # Download button
+        if st.button("💾 Download Trade History"):
+            csv = history_df.to_csv(index=False)
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name="paper_trade_history.csv",
+                mime="text/csv"
+            )
+    else:
+        st.info("No trade history yet")
+    
+    # Reset button
+    if st.button("🔄 Reset Paper Trading"):
+        st.session_state.paper_trades = []
+        st.session_state.paper_positions = {}
+        st.session_state.paper_pnl = {"realized": 0.0, "unrealized": 0.0}
+        st.session_state.trade_history = []
+        st.session_state["last_signal"] = None
+        st.success("Paper trading data reset!")
+
+if __name__ == "__main__":
+    logging.basicConfig(filename="trading_debug.log", level=logging.INFO, format="%(asctime)s - %(message)s")
+    main()
