@@ -189,10 +189,10 @@ def compute_signals(merged_df, atm_strike, ltp):
 
         # Signal determination
             
-        if ratio = 1:
+        if ratio == 1:
             signal = "BUY"
            
-        elif ratio < -1:
+        elif ratio == -1:
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
