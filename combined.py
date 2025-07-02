@@ -146,7 +146,7 @@ def compute_signals(merged_df, atm_strike, ltp):
         CV = row["CE_Vol"].values[0] if "CE_Vol" in row else None
         P = row["PE_ltp"].values[0] if "PE_ltp" in row else None
         PV = row["PE_Vol"].values[0] if "PE_Vol" in row else None
-        st.write(f"K={K}, C={C}, CV={CV}, P={P},PV={PV}, S={ltp}, bias={((C*CV)-(P*PV)) / ((C*CV)+(P*PV))}")
+        # st.write(f"K={K}, C={C}, CV={CV}, P={P},PV={PV}, S={ltp}, bias={((C*CV)-(P*PV)) / ((C*CV)+(P*PV))}")
 
         if C is None or P is None:
             continue
@@ -161,7 +161,7 @@ def compute_signals(merged_df, atm_strike, ltp):
 
     delta_bias_avg = sum(bias_list) / len(bias_list)
     st.write(f"selected_strikes :{selected_strikes}")
-    st.write(f"Δbias values: {bias_list}")
+    # st.write(f"Δbias values: {bias_list}")
     st.write(f"Δbias_avg: {round(delta_bias_avg, 2)}")
 
 
@@ -203,12 +203,13 @@ def compute_signals(merged_df, atm_strike, ltp):
     denominator = abs(((itm_ce_price * itm_ce_vol) - (otm_ce_price * otm_ce_vol))) + abs(((itm_pe_price * itm_pe_vol) - (otm_pe_price * otm_pe_vol)))
 
     ratio = numerator / denominator if denominator != 0 else 0
+    st.write(f"Ratio: {round(ratio, 2)}")
 
 
     
-    if delta_bias_avg > 0.2 and ratio > 0.2:
+    if delta_bias_avg > 0.2 and ratio == 1:
         signal = "BUY"
-    elif delta_bias_avg < -0.2 and ratio < 0.2:
+    elif delta_bias_avg < -0.2 and ratio == -1:
         signal = "SELL"
     else:
         signal = "SIDEWAYS"
