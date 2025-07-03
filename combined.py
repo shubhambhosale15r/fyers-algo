@@ -206,10 +206,10 @@ def compute_signals(merged_df, atm_strike, ltp):
     st.write(f"Ratio: {round(ratio, 2)}")
 
 
-    
-    if delta_bias_avg > 0.2 and ratio == 1:
+    # range -1 to 1
+    if delta_bias_avg > 0.1 and ratio > 0.1:
         signal = "BUY"
-    elif delta_bias_avg < -0.2 and ratio == -1:
+    elif delta_bias_avg < -0.1 and ratio < -0.1:
         signal = "SELL"
     else:
         signal = "SIDEWAYS"
