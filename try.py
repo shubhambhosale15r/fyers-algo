@@ -14,8 +14,8 @@ import os
 # Setting wide mode as default and handling Streamlit page config securely
 if not st.get_option("server.headless"):
     st.set_page_config(
-        page_title="Fyers Algo",
-        page_icon="💸",
+        page_title="Fyers Algo OI",
+        page_icon="",
         layout="wide",
         initial_sidebar_state="expanded"
     )
