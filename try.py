@@ -155,9 +155,9 @@ def compute_signals(merged_df, atm_strike, ltp):
         merged_df_sorted = merged_df.sort_values("Strike")
 
         # Find the first strike where PCR < 0.5
-        first_low = merged_df_sorted[merged_df_sorted["PCR"] < 0.5].head(1)
+        first_low = merged_df_sorted[merged_df_sorted["PCR"] < 0.1].head(1)
         # Find the first strike where PCR >= 1.5
-        first_high = merged_df_sorted[merged_df_sorted["PCR"] >= 1.5].tail(1)
+        first_high = merged_df_sorted[merged_df_sorted["PCR"] >= 1.9].tail(1)
 
         # Get selected strike details for each
         low_strike = int(first_low["Strike"].values[0]) if not first_low.empty else None
@@ -170,13 +170,12 @@ def compute_signals(merged_df, atm_strike, ltp):
 
         # Determine signal
         if dist_low < dist_high:
-            signal = "BEARISH"
+            signal = "SELL"
         elif dist_high < dist_low:
-            signal = "BULLISH"
+            signal = "BUY"
         else:
             signal = "SIDEWAYS"
 
-        # Return all the details
         return {
             "signal": signal,
             "atm_strike": atm_strike,
@@ -199,7 +198,6 @@ def compute_signals(merged_df, atm_strike, ltp):
             "high_pcr": None,
             "high_dist": None
         }
-
 # --- Strike Selection ---
 def select_strikes_atm_half_price(chain, atm_strike):
     try:
@@ -737,7 +735,8 @@ def main():
 
     st.subheader("📈 Live Trading")
     if chain:
-        signal, atm = format_and_show(chain, f"Current Expiry: {curr_date}", ltp, show_signals=True)
+        result, atm = format_and_show(chain, f"Current Expiry: {curr_date}", ltp, show_signals=True)
+        signal = result["signal"] if result else None
         if signal and ltp:
             timestamp = datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S")
             st.session_state.signal_history.append({
