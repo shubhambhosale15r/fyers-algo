@@ -149,54 +149,64 @@ def get_symbol_ltp(cid, token, symbol):
 # --- Signal Computation ---
 def compute_signals(merged_df, atm_strike, ltp):
     try:
-        # Compute PCR for each strike
+        # Calculate PCR for each strike
         merged_df["PCR"] = merged_df["PE_OI"] / merged_df["CE_OI"]
-        # Sort the dataframe by Strike ascending
         merged_df_sorted = merged_df.sort_values("Strike")
 
-        # Find the first strike where PCR < 0.5
-        first_low = merged_df_sorted[merged_df_sorted["PCR"] < 0.1].head(1)
-        # Find the first strike where PCR >= 1.5
-        first_high = merged_df_sorted[merged_df_sorted["PCR"] >= 1.9].tail(1)
+        # 1. Find lowest-strike where PCR < 0.1 (upper resistance boundary)
+        upper_resistance = merged_df_sorted[merged_df_sorted["PCR"] < 0.1]
+        if not upper_resistance.empty:
+            upper_strike = int(upper_resistance["Strike"].min())
+            upper_pcr = float(upper_resistance[upper_resistance["Strike"] == upper_strike]["PCR"].values[0])
+        else:
+            upper_strike = None
+            upper_pcr = None
 
-        # Get selected strike details for each
-        low_strike = int(first_low["Strike"].values[0]) if not first_low.empty else None
-        low_pcr = float(first_low["PCR"].values[0]) if not first_low.empty else None
-        dist_low = abs(low_strike - atm_strike) if low_strike is not None else float('inf')
+        # 2. Find highest-strike where PCR > 1.9 (lower support boundary)
+        lower_support = merged_df_sorted[merged_df_sorted["PCR"] > 1.9]
+        if not lower_support.empty:
+            lower_strike = int(lower_support["Strike"].max())
+            lower_pcr = float(lower_support[lower_support["Strike"] == lower_strike]["PCR"].values[0])
+        else:
+            lower_strike = None
+            lower_pcr = None
 
-        high_strike = int(first_high["Strike"].values[0]) if not first_high.empty else None
-        high_pcr = float(first_high["PCR"].values[0]) if not first_high.empty else None
-        dist_high = abs(high_strike - atm_strike) if high_strike is not None else float('inf')
+        # 3. Calculate the midpoint
+        if upper_strike is not None and lower_strike is not None:
+            midpoint = (upper_strike + lower_strike) / 2
+        else:
+            midpoint = None
 
-        # Determine signal
-        if dist_low < dist_high:
-            signal = "SELL"
-        elif dist_high < dist_low:
-            signal = "BUY"
+        # 4. Bias logic
+        if midpoint is not None:
+            if atm_strike > midpoint:
+                signal = "BUY"
+            elif atm_strike < midpoint:
+                signal = "SELL"
+            else:
+                signal = "SIDEWAYS"
         else:
             signal = "SIDEWAYS"
 
         return {
             "signal": signal,
             "atm_strike": atm_strike,
-            "low_strike": low_strike,
-            "low_pcr": low_pcr,
-            "low_dist": dist_low,
-            "high_strike": high_strike,
-            "high_pcr": high_pcr,
-            "high_dist": dist_high
+            "upper_strike": upper_strike,
+            "upper_pcr": upper_pcr,
+            "lower_strike": lower_strike,
+            "lower_pcr": lower_pcr,
+            "midpoint": midpoint
         }
     except Exception as e:
         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
         return {
-            "signal": "SIDEWAYS",
+            "signal": "ERROR",
             "atm_strike": atm_strike,
-            "low_strike": None,
-            "low_pcr": None,
-            "low_dist": None,
-            "high_strike": None,
-            "high_pcr": None,
-            "high_dist": None
+            "upper_strike": None,
+            "upper_pcr": None,
+            "lower_strike": None,
+            "lower_pcr": None,
+            "midpoint": None
         }
 # --- Strike Selection ---
 def select_strikes_atm_half_price(chain, atm_strike):
@@ -557,9 +567,13 @@ def format_and_show(chain, title, ltp, show_signals=False):
         result = compute_signals(merged, atm, ltp)
         st.metric("Signal", result["signal"])
         st.write(f"ATM Strike: {result['atm_strike']}")
-        st.write(f"Low PCR (<0.5): Strike={result['low_strike']}, PCR={result['low_pcr']}, Distance={result['low_dist']}")
-        st.write(f"High PCR (>=1.5): Strike={result['high_strike']}, PCR={result['high_pcr']}, Distance={result['high_dist']}")
-
+        st.write(f"Upper Resistance Strike (PCR < 0.1): {result['upper_strike']} | PCR: {result['upper_pcr']}")
+        st.write(f"Lower Support Strike (PCR > 1.9): {result['lower_strike']} | PCR: {result['lower_pcr']}")
+        st.write(f"Sentiment Equilibrium (Midpoint): {result['midpoint']}")
+        if result["midpoint"] is not None:
+            st.write(f"Bias: {'Bullish (ATM > Midpoint)' if result['signal']=='BUY' else 'SELL (ATM < Midpoint)' if result['signal']=='SELL' else 'SIDEWAYS'}")
+        else:
+            st.info("Could not determine midpoint for sentiment bias.")
     styled = merged.style.apply(
         lambda row: ["background: yellow" if row["Strike"] == atm else "" for _ in row],
         axis=1
