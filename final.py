@@ -210,7 +210,74 @@ def compute_signals(merged_df, atm_strike, ltp):
         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
         return "SIDEWAYS"
 
+# # Signal computation with improved logging
+# def compute_signals(merged_df, atm_strike, ltp):
+#     try:
+#         strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
+#         idx = strikes.index(atm_strike)
+        
+#         # ATM Strike and atm ce and atm pe prices
+#         atm_row = merged_df[merged_df["Strike"] == atm_strike]
+#         atm_ce_price = atm_row["CE_ltp"].values[0] if "CE_ltp" in atm_row else None
+#         atm_pe_price = atm_row["PE_ltp"].values[0] if "PE_ltp" in atm_row else None
 
+#         # Identify ITM strikes
+#         ce_itm_strikes = strikes[max(0, idx-3):idx] if idx >= 1 else []
+#         pe_itm_strikes = strikes[idx+1:min(len(strikes), idx+4)] if idx < len(strikes) - 1 else []
+
+#         # Identify OTM strikes
+#         ce_otm_strikes = strikes[idx+1:min(len(strikes), idx+4)] if idx < len(strikes) - 1 else []
+#         pe_otm_strikes = strikes[max(0, idx-3):idx] if idx >= 1 else []
+
+#         # Calculate metrics
+#         itm_pe_oi_chng = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OICh"].sum()
+#         itm_ce_oi_chng = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OICh"].sum()
+#         itm_pe_oi = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OI"].sum()
+#         itm_ce_oi = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OI"].sum()
+#         itm_pcr_oi = itm_pe_oi / itm_ce_oi if itm_ce_oi > 0 else 0
+
+#         # Calculate prices
+#         itm_pe_price = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
+#         itm_ce_price = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
+#         otm_pe_price = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_ltp"].sum()
+#         otm_ce_price = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_ltp"].sum()
+
+#         itm_otm_pe_diff = itm_pe_price - otm_pe_price
+#         itm_otm_ce_diff = itm_ce_price - otm_ce_price
+#         ratio = itm_otm_pe_diff / itm_otm_ce_diff if itm_otm_ce_diff != 0 else 0
+
+#         # Signal determination
+#         if itm_pe_oi_chng > 0 and itm_ce_oi_chng > 0:
+#             itm_pcr_oi_chng = itm_pe_oi_chng / itm_ce_oi_chng
+            
+#             if itm_pcr_oi < 1 and itm_pcr_oi_chng < 1 and ratio < 1:
+#                 signal = "BUY"
+#             elif itm_pcr_oi > 1 and itm_pcr_oi_chng > 1 and ratio > 1:
+#                 signal = "SELL"
+#             else:
+#                 signal = "SIDEWAYS"
+#         else:
+#             if itm_pcr_oi < 1 and itm_ce_oi_chng > 0 and itm_pe_oi_chng < 0 and ratio < 1:
+#                 signal = "BUY"
+#             elif itm_pcr_oi > 1 and itm_ce_oi_chng < 0 and itm_pe_oi_chng > 0 and ratio > 1:
+#                 signal = "SELL"
+#             else:
+#                 signal = "SIDEWAYS"
+
+#         # Logging for debugging
+#         logging.info(
+#             f"Signal Computation: "
+#             f"itm_pcr_oi={itm_pcr_oi:.2f}, "
+#             f"itm_pcr_oi_chng={itm_pcr_oi_chng:.2f}, "
+#             f"ratio={ratio:.2f}, "
+#             f"signal={signal}"
+#         )
+
+#         return signal
+
+#     except Exception as e:
+#         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
+#         return "SIDEWAYS"
 
 # Optimized strike selection
 def select_strikes_atm_half_price(chain, atm_strike):
@@ -932,49 +999,7 @@ def show_paper_trading_page(cid, token):
         st.session_state.trade_history = []
         st.session_state["last_signal"] = None
         st.success("Paper trading data reset!")
-def sync_with_fyers_on_start(fyers):
-    """
-    Syncs current open positions from Fyers to Streamlit session state for both paper and live trades.
-    Prevents duplicate trades after restarting the app.
-    """
-    try:
-        positions = fyers.positions().get("netPositions", [])
-        paper_synced_positions = {}
-        live_synced_positions = {}
 
-        for p in positions:
-            if p.get("segment") == "NFO" and p.get("qty") != 0:
-                symbol = p["symbol"]
-                pos_data = {
-                    "symbol": symbol,
-                    "qty": abs(int(p["qty"])),
-                    "action": "BUY" if p["qty"] > 0 else "SELL",
-                    "entry_price": float(p.get("avgPrice", p.get("entryPrice", 0))),
-                    "current_price": float(p.get("lastTradedPrice", p.get("avgPrice", 0))),
-                    "signal": None,  # Not available from Fyers positions
-                    "side": 1 if p["qty"] > 0 else -1,
-                    "id": None,      # Not available from Fyers positions
-                    "entry_time": None
-                }
-                # Update both paper and live positions
-                paper_synced_positions[symbol] = pos_data
-                live_synced_positions[symbol] = pos_data
-
-        # Sync paper trading positions
-        st.session_state.paper_positions = paper_synced_positions
-        # Sync live trading positions
-        st.session_state.live_positions = live_synced_positions
-
-        # If positions exist, set signals to None to avoid duplicate entry on restart
-        if paper_synced_positions:
-            st.session_state["paper_last_signal"] = None
-        if live_synced_positions:
-            st.session_state["live_last_signal"] = None
-
-        logging.info(f"Synced open positions from Fyers for paper & live trades: {list(live_synced_positions.keys())}")
-
-    except Exception as e:
-        logging.error(f"Error syncing positions from Fyers: {str(e)}", exc_info=True)
 # Main application
 def main():
     # Initialize everything
@@ -1026,10 +1051,6 @@ def main():
         st.info("Enter credentials in the sidebar.")
         return
 
-    # ----> Sync both paper and live positions at startup
-    fy = fyersModel.FyersModel(client_id=cid, token=token, is_async=False, log_path="")
-    sync_with_fyers_on_start(fy)
-
     # Update data
     ltp, chain, curr_date = update_all_data(cid, token, sym, paper_trade)
 
@@ -1071,12 +1092,12 @@ def main():
         valid_buy = (sell_pe is not None and buy_pe is not None)
         valid_sell = (sell_ce is not None and buy_ce is not None)
 
-        # Trading logic
+        # Initialize Fyers for auto trading
+        fy = None
         if auto_trade:
             fy = fyersModel.FyersModel(client_id=cid, token=token, is_async=False, log_path="")
-        else:
-            fy = None
 
+        # Trading logic
         if signal == "BUY" and not valid_buy:
             st.warning("Missing option data for BUY signal. Unable to place trade.")
         elif signal == "SELL" and not valid_sell:
