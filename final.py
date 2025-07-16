@@ -22,7 +22,7 @@ st.set_page_config(
 )
 # Constants
 class Config:
-    REFRESH_INTERVAL = 60  # seconds
+    REFRESH_INTERVAL = 5  # seconds
     API_RATE_LIMIT = 200
     API_WINDOW = 60  # seconds
     LOT_SIZE = 75 
