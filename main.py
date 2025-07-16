@@ -106,72 +106,66 @@ def get_symbol_ltp(cid, token, symbol):
     return resp["d"][0]["v"]["lp"]
     
 def compute_signals(merged_df, atm_strike, ltp):
-    # Computing Δbias and Synthetic Forward Deviation
-    # bias = C - P - (S - K)
-    #volumeavgbias = ( (C* CallVol - P * PutVol) / (CallVol + PutVol) ) -(S - K)
-    # syn_forward_price = (C - P + K) - S
-    # bias: measures deviation from put-call parity
-    # syn_forward_price: measures market’s implied forward direction
-    # C: Call price    # P: Put price    # K: Strike    # S: Spot price
-
-    # Recommended Update Intervals 
-    # Timeframe you trade        Ideal update freq
-    # Scalping (<1 min)          15–30 seconds
-    # Intraday 2–15 min          ✅ 3–5 mins
-    # Trend following	           10–15 mins
-    
-    strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
     try:
+        strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
         idx = strikes.index(atm_strike)
-    except ValueError:
-        st.error(f"ATM strike {atm_strike} not in available strikes")
+        
+        # ATM Strike and atm ce and atm pe prices
+        atm_row = merged_df[merged_df["Strike"] == atm_strike]
+        atm_ce_price = atm_row["CE_ltp"].values[0] if "CE_ltp" in atm_row else None
+        atm_pe_price = atm_row["PE_ltp"].values[0] if "PE_ltp" in atm_row else None
+
+        # Identify ITM strikes
+        ce_itm_strikes = strikes[max(0, idx-3):idx] if idx >= 1 else []
+        pe_itm_strikes = strikes[idx+1:min(len(strikes), idx+4)] if idx < len(strikes) - 1 else []
+
+        # Identify OTM strikes
+        ce_otm_strikes = strikes[idx+1:min(len(strikes), idx+4)] if idx < len(strikes) - 1 else []
+        pe_otm_strikes = strikes[max(0, idx-3):idx] if idx >= 1 else []
+
+        # Calculate prices
+        itm_pe_price = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
+        itm_ce_price = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
+        otm_pe_price = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_ltp"].sum()
+        otm_ce_price = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_ltp"].sum()
+
+        # Calculate volume
+        itm_pe_vol = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_Vol"].sum()
+        itm_ce_vol = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_Vol"].sum()
+        otm_pe_vol = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_Vol"].sum()
+        otm_ce_vol = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_Vol"].sum()
+
+        # ((C itm * CV) - (c otm * PV)) / ((p itm * CV) - (P otm * PV))
+        # C = itm_ce_price P = itm_pe_price   CV=itm_ce_vol sum PV=itm_pe_vol sum
+
+        numerator = ((itm_ce_price * itm_ce_vol) + (otm_ce_price * otm_ce_vol)) - ((itm_pe_price * itm_pe_vol) + (otm_pe_price * otm_pe_vol))
+        denominator = abs(((itm_ce_price * itm_ce_vol) + (otm_ce_price * otm_ce_vol))) + abs(((itm_pe_price * itm_pe_vol) + (otm_pe_price * otm_pe_vol)))
+
+        ratio = numerator / denominator if denominator != 0 else 0
+
+        # Signal determination
+            
+        if ratio > 0.2:
+            signal = "BUY"
+           
+        elif ratio < -0.2:
+            signal = "SELL"
+        else:
+            signal = "SIDEWAYS"
+
+        # Logging for debugging
+        logging.info(
+            f"Signal Computation: "
+            f"ratio={ratio:.2f}, "
+            f"signal={signal}"
+        )
+
+        return signal
+
+    except Exception as e:
+        logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
         return "SIDEWAYS"
 
-    # Get K1 = ATM-1, K2 = ATM, K3 = ATM+1
-    target_idxs = [idx - 1, idx, idx + 1]
-    selected_strikes = []
-    for i in target_idxs:
-        if i < 0 or i >= len(strikes):
-            continue
-        selected_strikes.append(strikes[i])
-
-    bias_list = []
-    for K in selected_strikes:
-        row = merged_df[merged_df["Strike"] == K]
-        if row.empty:
-            continue
-        # Use column names based on your merged_df construction
-        C = row["CE_ltp"].values[0] if "CE_ltp" in row else None
-        CV = row["CE_Vol"].values[0] if "CE_Vol" in row else None
-        P = row["PE_ltp"].values[0] if "PE_ltp" in row else None
-        PV = row["PE_Vol"].values[0] if "PE_Vol" in row else None
-        st.write(f"K={K}, C={C}, CV={CV}, P={P},PV={PV}, S={ltp}, bias={((C*CV)-(P*PV)) / ((C*CV)+(P*PV))}")
-
-        if C is None or P is None:
-            continue
-        S = ltp  # Spot price
-        avg_price = ((C * CV) - (P * PV)) / ((C * CV) + (P * PV))
-        bias_list.append(round(avg_price,2))
-       
-
-    if len(bias_list) < 2:
-        st.warning("Not enough strikes to compute Δbias_avg")
-        return "SIDEWAYS"
-
-    delta_bias_avg = sum(bias_list) / len(bias_list)
-    st.write(f"selected_strikes :{selected_strikes}")
-    st.write(f"Δbias values: {bias_list}")
-    st.write(f"Δbias_avg: {round(delta_bias_avg, 2)}")
-
-    # Simple threshold logic for demonstration (customize as needed)
-    if delta_bias_avg > 0.2 :#and forward_prices_avg > 1:
-        signal = "BUY"
-    elif delta_bias_avg < -0.2 :#and forward_prices_avg < -1:
-        signal = "SELL"
-    else:
-        signal = "SIDEWAYS"
-
-    return signal
 def select_strikes_atm_half_price(chain, atm_strike):
     """
     For BUY: Sell ATM PE, Buy PE with LTP ≈ half ATM PE LTP
