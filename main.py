@@ -160,7 +160,7 @@ def compute_signals(merged_df, atm_strike, ltp):
             f"signal={signal}"
         )
 
-        return signal
+        return signal,ratio
 
     except Exception as e:
         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
@@ -617,9 +617,9 @@ def format_and_show(chain, title, ltp, show_signals=False):
         atm = min(merged["Strike"].dropna(), key=lambda x: abs(x - ltp))
     st.subheader(title)
     if show_signals and atm is not None:
-        signal = compute_signals(merged, atm,ltp)
+        signal,ratio = compute_signals(merged, atm,ltp)
         st.metric("Signal", signal)  # Show just the PCR signal
-      
+        st.write("Ratio",ratio)
     styled = merged.style.apply(
         lambda row: ["background:yellow" if row["Strike"] == atm else "" for _ in row],
         axis=1
