@@ -22,7 +22,7 @@ st.set_page_config(
 )
 # Constants
 class Config:
-    REFRESH_INTERVAL = 5  # seconds
+    REFRESH_INTERVAL = 60  # seconds
     API_RATE_LIMIT = 200
     API_WINDOW = 60  # seconds
     LOT_SIZE = 75 
@@ -182,17 +182,17 @@ def compute_signals(merged_df, atm_strike, ltp):
         # ((C itm * CV) - (c otm * PV)) / ((p itm * CV) - (P otm * PV))
         # C = itm_ce_price P = itm_pe_price   CV=itm_ce_vol sum PV=itm_pe_vol sum
 
-        numerator = ((itm_ce_price * itm_ce_vol) - (otm_ce_price * otm_ce_vol)) - ((itm_pe_price * itm_pe_vol) - (otm_pe_price * otm_pe_vol))
-        denominator = abs(((itm_ce_price * itm_ce_vol) - (otm_ce_price * otm_ce_vol))) + abs(((itm_pe_price * itm_pe_vol) - (otm_pe_price * otm_pe_vol)))
+        numerator = ((itm_ce_price * itm_ce_vol) + (otm_ce_price * otm_ce_vol)) - ((itm_pe_price * itm_pe_vol) + (otm_pe_price * otm_pe_vol))
+        denominator = abs(((itm_ce_price * itm_ce_vol) + (otm_ce_price * otm_ce_vol))) + abs(((itm_pe_price * itm_pe_vol) + (otm_pe_price * otm_pe_vol)))
 
         ratio = numerator / denominator if denominator != 0 else 0
 
         # Signal determination
             
-        if ratio > 0.5:
+        if ratio > 0.2:
             signal = "BUY"
            
-        elif ratio < -0.5:
+        elif ratio < -0.2:
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
@@ -204,80 +204,11 @@ def compute_signals(merged_df, atm_strike, ltp):
             f"signal={signal}"
         )
 
-        return signal
+        return signal,ratio
 
     except Exception as e:
         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
         return "SIDEWAYS"
-
-# # Signal computation with improved logging
-# def compute_signals(merged_df, atm_strike, ltp):
-#     try:
-#         strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
-#         idx = strikes.index(atm_strike)
-        
-#         # ATM Strike and atm ce and atm pe prices
-#         atm_row = merged_df[merged_df["Strike"] == atm_strike]
-#         atm_ce_price = atm_row["CE_ltp"].values[0] if "CE_ltp" in atm_row else None
-#         atm_pe_price = atm_row["PE_ltp"].values[0] if "PE_ltp" in atm_row else None
-
-#         # Identify ITM strikes
-#         ce_itm_strikes = strikes[max(0, idx-3):idx] if idx >= 1 else []
-#         pe_itm_strikes = strikes[idx+1:min(len(strikes), idx+4)] if idx < len(strikes) - 1 else []
-
-#         # Identify OTM strikes
-#         ce_otm_strikes = strikes[idx+1:min(len(strikes), idx+4)] if idx < len(strikes) - 1 else []
-#         pe_otm_strikes = strikes[max(0, idx-3):idx] if idx >= 1 else []
-
-#         # Calculate metrics
-#         itm_pe_oi_chng = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OICh"].sum()
-#         itm_ce_oi_chng = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OICh"].sum()
-#         itm_pe_oi = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OI"].sum()
-#         itm_ce_oi = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OI"].sum()
-#         itm_pcr_oi = itm_pe_oi / itm_ce_oi if itm_ce_oi > 0 else 0
-
-#         # Calculate prices
-#         itm_pe_price = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
-#         itm_ce_price = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
-#         otm_pe_price = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_ltp"].sum()
-#         otm_ce_price = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_ltp"].sum()
-
-#         itm_otm_pe_diff = itm_pe_price - otm_pe_price
-#         itm_otm_ce_diff = itm_ce_price - otm_ce_price
-#         ratio = itm_otm_pe_diff / itm_otm_ce_diff if itm_otm_ce_diff != 0 else 0
-
-#         # Signal determination
-#         if itm_pe_oi_chng > 0 and itm_ce_oi_chng > 0:
-#             itm_pcr_oi_chng = itm_pe_oi_chng / itm_ce_oi_chng
-            
-#             if itm_pcr_oi < 1 and itm_pcr_oi_chng < 1 and ratio < 1:
-#                 signal = "BUY"
-#             elif itm_pcr_oi > 1 and itm_pcr_oi_chng > 1 and ratio > 1:
-#                 signal = "SELL"
-#             else:
-#                 signal = "SIDEWAYS"
-#         else:
-#             if itm_pcr_oi < 1 and itm_ce_oi_chng > 0 and itm_pe_oi_chng < 0 and ratio < 1:
-#                 signal = "BUY"
-#             elif itm_pcr_oi > 1 and itm_ce_oi_chng < 0 and itm_pe_oi_chng > 0 and ratio > 1:
-#                 signal = "SELL"
-#             else:
-#                 signal = "SIDEWAYS"
-
-#         # Logging for debugging
-#         logging.info(
-#             f"Signal Computation: "
-#             f"itm_pcr_oi={itm_pcr_oi:.2f}, "
-#             f"itm_pcr_oi_chng={itm_pcr_oi_chng:.2f}, "
-#             f"ratio={ratio:.2f}, "
-#             f"signal={signal}"
-#         )
-
-#         return signal
-
-#     except Exception as e:
-#         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
-#         return "SIDEWAYS"
 
 # Optimized strike selection
 def select_strikes_atm_half_price(chain, atm_strike):
@@ -793,63 +724,16 @@ def format_and_show(chain, title, ltp, show_signals=False):
         # Calculate all required metrics
         strikes = sorted(merged["Strike"].dropna().unique().tolist())
         idx = strikes.index(atm)
-        
-        # ITM strikes (3 closest below ATM for CE, above ATM for PE)
-        ce_itm_strikes = strikes[max(0, idx-3):idx]
-        pe_itm_strikes = strikes[idx+1:min(len(strikes), idx+4)]
-        
-        # OTM strikes (3 closest above ATM for CE, below ATM for PE)
-        ce_otm_strikes = strikes[idx+1:min(len(strikes), idx+4)]
-        pe_otm_strikes = strikes[max(0, idx-3):idx]
-
-        # Calculate OI changes and prices
-        # itm_pe_oi_chng = merged[merged["Strike"].isin(pe_itm_strikes)]["PE_OICh"].sum()
-        # itm_ce_oi_chng = merged[merged["Strike"].isin(ce_itm_strikes)]["CE_OICh"].sum()
-        # itm_pe_oi = merged[merged["Strike"].isin(pe_itm_strikes)]["PE_OI"].sum()
-        # itm_ce_oi = merged[merged["Strike"].isin(ce_itm_strikes)]["CE_OI"].sum()
-        # itm_pcr_oi = itm_pe_oi/itm_ce_oi if itm_ce_oi > 0 else 0
-        # Calculate prices
-        itm_pe_price = merged[merged["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
-        itm_ce_price = merged[merged["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
-        otm_pe_price = merged[merged["Strike"].isin(pe_otm_strikes)]["PE_ltp"].sum()
-        otm_ce_price = merged[merged["Strike"].isin(ce_otm_strikes)]["CE_ltp"].sum()
-
-        # Calculate volume
-        itm_pe_vol = merged[merged["Strike"].isin(pe_itm_strikes)]["PE_Vol"].sum()
-        itm_ce_vol = merged[merged["Strike"].isin(ce_itm_strikes)]["CE_Vol"].sum()
-        otm_pe_vol = merged[merged["Strike"].isin(pe_otm_strikes)]["PE_Vol"].sum()
-        otm_ce_vol = merged[merged["Strike"].isin(ce_otm_strikes)]["CE_Vol"].sum()
-
-        # ((C itm * CV) - (c otm * PV)) - ((p itm * CV) - (P otm * PV))
-        # C = itm_ce_price P = itm_pe_price   CV=itm_ce_vol sum PV=itm_pe_vol sum
-
-        numerator = ((itm_ce_price * itm_ce_vol) - (otm_ce_price * otm_ce_vol)) - ((itm_pe_price * itm_pe_vol) - (otm_pe_price * otm_pe_vol))
-        denominator = abs(((itm_ce_price * itm_ce_vol) - (otm_ce_price * otm_ce_vol))) + abs(((itm_pe_price * itm_pe_vol) - (otm_pe_price * otm_pe_vol)))
-        ratio = numerator / denominator if denominator != 0 else 0
-
-        # Compute final signal
-        signal = compute_signals(merged, atm, ltp)
+        signal,ratio = compute_signals(merged, atm, ltp)
+       
         
         # Display results with improved formatting
         st.metric(" Signal", signal)
-        # st.write(f"ITM PCR OI: {itm_pcr_oi:.4f}")
+        # st.metric("Ratio: ",ratio)
 
-        # if itm_pe_oi_chng > 0 and itm_ce_oi_chng > 0:
-        #     pcr_chng_display = itm_pe_oi_chng / itm_ce_oi_chng
-        #     st.write(f"ITM PCR OI Change: {pcr_chng_display:.4f}")
-        # else:
-        #     st.write(f"PE OI Change: {itm_pe_oi_chng} (ITM)")
-        #     st.write(f"CE OI Change: {itm_ce_oi_chng} (ITM)")
-
-        st.write("---")
-        st.write("Option Prices:")
-        st.write(f"ITM CE: {itm_ce_price:.2f} | OTM CE: {otm_ce_price:.2f}")
-        st.write(f"ITM PE: {itm_pe_price:.2f} | OTM PE: {otm_pe_price:.2f} ")
         st.write("---")
         st.write(f"Ratio: {ratio:.2f}")
-        st.write(f"numerator: {((itm_ce_price * itm_ce_vol) - (otm_ce_price * otm_ce_vol)) - ((itm_pe_price * itm_pe_vol) - (otm_pe_price * itm_pe_vol))}")
-        st.write(f"denominator: {abs(((itm_ce_price * itm_ce_vol) - (otm_ce_price * otm_ce_vol))) + abs(((itm_pe_price * itm_pe_vol) - (otm_pe_price * itm_pe_vol)))}")
-
+   
     # Highlight ATM row in the dataframe
     styled = merged.style.apply(
         lambda row: ["background: yellow" if row["Strike"] == atm else "" for _ in row],
@@ -1003,7 +887,7 @@ def show_paper_trading_page(cid, token):
 # Main application
 def main():
     # Initialize everything
-    st.set_page_config(layout="wide")
+    # st.set_page_config(layout="wide")
     init_session_state()
     load_credentials()
     
