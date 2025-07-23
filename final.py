@@ -728,9 +728,10 @@ def format_and_show(chain, title, ltp, show_signals=False):
        
         
         # Display results with improved formatting
-        st.write(" Signal", signal)
+        st.metric(" Signal", signal)
         # st.metric("Ratio: ",ratio)
 
+        st.write("---")
         st.write(f"Ratio: {ratio:.2f}")
    
     # Highlight ATM row in the dataframe
