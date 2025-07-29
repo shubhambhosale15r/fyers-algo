@@ -218,9 +218,9 @@ def compute_signals(merged_df, atm_strike, ltp):
     
 
         # Default signal
-        if pcr > 1.0 and ce_activity > pe_activity:
+        if pcr > 1.1 and ce_activity > pe_activity:
             signal = "BUY"
-        elif pcr < 1.0 and pe_activity > ce_activity:
+        elif pcr < 0.9 and pe_activity > ce_activity:
             signal = "SELL"
         else :
             signal = "SIDEWAYS"
