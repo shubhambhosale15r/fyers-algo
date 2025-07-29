@@ -15,7 +15,7 @@ import os
 
 #setting wide mode as default
 st.set_page_config(
-    page_title="Fyers Algo OI",
+    page_title="Fyers Algo",
     page_icon="💸",
     layout="wide",
     initial_sidebar_state="expanded"  # This is the key line
@@ -148,12 +148,12 @@ def get_symbol_ltp(cid, token, symbol):
         return None
     return resp["d"][0]["v"]["lp"]
 
-# Signal computation with improved logging and safeguards
+# Signal computation with improved logging
 def compute_signals(merged_df, atm_strike, ltp):
     try:
         # Ensure required columns exist
         required_columns = [
-            "Strike", "CE_ltp", "PE_ltp", "CE_OICh", "PE_OICh"
+            "Strike", "CE_ltp", "PE_ltp", "CE_OI", "PE_OI"
         ]
         for col in required_columns:
             if col not in merged_df.columns:
@@ -174,73 +174,66 @@ def compute_signals(merged_df, atm_strike, ltp):
         atm_pe_price = atm_row["PE_ltp"].values[0] if not atm_row.empty else 0.0
 
         # Identify ITM/OTM strikes
-        ce_itm_strikes = strikes[max(0, idx - 3):idx] if idx >= 1 else []
-        pe_itm_strikes = strikes[idx + 1:min(len(strikes), idx + 4)] if idx < len(strikes) - 1 else []
-
-        ce_otm_strikes = strikes[idx + 1:min(len(strikes), idx + 4)] if idx < len(strikes) - 1 else []
-        pe_otm_strikes = strikes[max(0, idx - 3):idx] if idx >= 1 else []
+        ce_itm_strikes = strikes[max(0, idx - 10):idx] if idx >= 1 else []
+        pe_itm_strikes = strikes[idx + 1:min(len(strikes), idx + 11)] if idx < len(strikes) - 1 else []
+        # st.write(f"ITM Strikes: CE {ce_itm_strikes} | PE{pe_itm_strikes}")
+        ce_otm_strikes = strikes[idx + 1:min(len(strikes), idx + 11)] if idx < len(strikes) - 1 else []
+        pe_otm_strikes = strikes[max(0, idx - 10):idx] if idx >= 1 else []
 
         # Helper to sum column values with .fillna(0)
         def sum_column(strikes_list, col_name):
             return merged_df[merged_df["Strike"].isin(strikes_list)][col_name].fillna(0).sum()
 
         # Prices
-        itm_pe_price = sum_column(pe_itm_strikes, "PE_ltp")
-        itm_ce_price = sum_column(ce_itm_strikes, "CE_ltp")
-        otm_pe_price = sum_column(pe_otm_strikes, "PE_ltp")
-        otm_ce_price = sum_column(ce_otm_strikes, "CE_ltp")
+        itm_pe_vol = sum_column(pe_itm_strikes, "PE_Vol")
+        itm_ce_vol = sum_column(ce_itm_strikes, "CE_Vol")
+        otm_pe_vol = sum_column(pe_otm_strikes, "PE_Vol")
+        otm_ce_vol = sum_column(ce_otm_strikes, "CE_Vol")
 
         # OI changes
-        itm_pe_oi = sum_column(pe_itm_strikes, "PE_OICh")
-        itm_ce_oi = sum_column(ce_itm_strikes, "CE_OICh")
-        otm_pe_oi = sum_column(pe_otm_strikes, "PE_OICh")
-        otm_ce_oi = sum_column(ce_otm_strikes, "CE_OICh")
+        itm_pe_oi = sum_column(pe_itm_strikes, "PE_OI")
+        itm_ce_oi = sum_column(ce_itm_strikes, "CE_OI")
+        otm_pe_oi = sum_column(pe_otm_strikes, "PE_OI")
+        otm_ce_oi = sum_column(ce_otm_strikes, "CE_OI")
 
-        # Initial money flow
-        ce_money_flow = (itm_ce_price * itm_ce_oi) + (otm_ce_price * otm_ce_oi)
-        pe_money_flow = (itm_pe_price * itm_pe_oi) + (otm_pe_price * otm_pe_oi)
 
         # Add ATM contribution
         if not atm_row.empty:
-            atm_ce_ltp = atm_row["CE_ltp"].values[0]
-            atm_pe_ltp = atm_row["PE_ltp"].values[0]
-            atm_ce_oi = atm_row["CE_OICh"].values[0]
-            atm_pe_oi = atm_row["PE_OICh"].values[0]
+            atm_ce_Vol = atm_row["CE_Vol"].values[0]
+            atm_pe_Vol = atm_row["PE_Vol"].values[0]
+            atm_ce_oi = atm_row["CE_OI"].values[0]
+            atm_pe_oi = atm_row["PE_OI"].values[0]
 
             # Handle NaNs
-            atm_ce_ltp = 0.0 if pd.isna(atm_ce_ltp) else atm_ce_ltp
-            atm_pe_ltp = 0.0 if pd.isna(atm_pe_ltp) else atm_pe_ltp
+            atm_ce_Vol = 0.0 if pd.isna(atm_ce_Vol) else atm_ce_Vol
+            atm_pe_Vol = 0.0 if pd.isna(atm_pe_Vol) else atm_pe_Vol
             atm_ce_oi = 0.0 if pd.isna(atm_ce_oi) else atm_ce_oi
             atm_pe_oi = 0.0 if pd.isna(atm_pe_oi) else atm_pe_oi
 
-            ce_money_flow += atm_ce_ltp * atm_ce_oi
-            pe_money_flow += atm_pe_ltp * atm_pe_oi
-        else:
-            atm_ce_ltp = atm_pe_ltp = 0.0
+        # Computation part
+        pcr = (itm_pe_oi + otm_pe_oi + atm_pe_oi) / (itm_ce_oi + otm_ce_oi + atm_ce_oi) if (itm_ce_oi + otm_ce_oi + atm_ce_oi) > 0 else 0.0
 
-        # Compute total prices
-        total_ce_price = itm_ce_price + otm_ce_price + atm_ce_price
-        total_pe_price = itm_pe_price + otm_pe_price + atm_pe_price
+        ce_activity = (itm_ce_vol + otm_ce_vol + atm_ce_Vol) / (itm_ce_oi + otm_ce_oi + atm_ce_oi) if (itm_ce_oi + otm_ce_oi + atm_ce_oi) > 0 else 0.0
+        pe_activity = (itm_pe_vol + otm_pe_vol + atm_pe_Vol) / (itm_pe_oi + otm_pe_oi + atm_pe_oi) if (itm_pe_oi + otm_pe_oi + atm_pe_oi) > 0 else 0.0
+    
 
         # Default signal
-        signal = "SIDEWAYS"
-
-        # Signal logic
-        # if total_ce_price > 1.10 * total_pe_price:
-        if pe_money_flow > 1.10 * ce_money_flow or (ce_money_flow < 0 and pe_money_flow > 0):
-                signal = "BUY"
-        # elif total_pe_price > 1.10 * total_ce_price:
-        elif ce_money_flow > 1.10 * pe_money_flow or (pe_money_flow < 0 and ce_money_flow > 0):
-                signal = "SELL"
+        if pcr > 1.0 and ce_activity > pe_activity:
+            signal = "BUY"
+        elif pcr < 1.0 and pe_activity > ce_activity:
+            signal = "SELL"
+        else :
+            signal = "SIDEWAYS"
 
         # Logging for debug
-        logging.info(f"Computed Signal: {signal} | CE Flow: {ce_money_flow:.2f} | PE Flow: {pe_money_flow:.2f} ")
+        logging.info(f"Computed Signal: {signal} | CE Activity: {ce_activity:.2f} | PE Activity: {pe_activity:.2f} | PCR: {pcr:.2f}")
 
-        return signal, ce_money_flow, pe_money_flow
+        return signal, ce_activity, pe_activity, pcr
 
     except Exception as e:
         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
-        return "SIDEWAYS", "Error", "Error"
+        return "SIDEWAYS", "Error", "Error","Error"
+    
     
 # Optimized strike selection
 def select_strikes_atm_half_price(chain, atm_strike):
@@ -751,12 +744,13 @@ def format_and_show(chain, title, ltp, show_signals=False):
         atm = min(merged["Strike"].dropna(), key=lambda x: abs(x - ltp))
     
     st.subheader(title)
-    
-    signal,ce_money_flow,pe_money_flow = compute_signals(merged, atm, ltp)
-    
+
+    signal,ce_activity,pe_activity,pcr = compute_signals(merged, atm, ltp)
+
     st.write("Signal: ", signal)
-    st.write("CE Money Flow: ", ce_money_flow)
-    st.write("PE Money Flow: ", pe_money_flow)
+    st.write("CE Activity: ", ce_activity)
+    st.write("PE Activity: ", pe_activity)
+    st.write("PCR: ", pcr)
 
 
     st.caption(f"ATM Strike: {atm} | Underlying LTP: {ltp}")
@@ -764,7 +758,6 @@ def format_and_show(chain, title, ltp, show_signals=False):
     if show_signals and atm is not None:
         return signal, atm
     return None, atm
-
 
 @handle_errors
 def update_all_data(cid, token, sym, paper_trade_enabled):
