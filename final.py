@@ -206,9 +206,9 @@ def compute_signals(merged_df, atm_strike, ltp):
             # st.write(f"ce vol/oi ratio :{itm_ce_vol/itm_ce_oi:.2f} | pe vol/oi ratio :{itm_pe_vol/itm_pe_oi:.2f}")
             ratio = numerator / denominator if denominator != 0 else 0
             # Signal determination              
-            if ratio > 0.25:
+            if ratio > 0.5:
                 signal = "BUY"
-            elif ratio < -0.25:
+            elif ratio < -0.5:
                 signal = "SELL"
             else:
                 signal = "SIDEWAYS"
