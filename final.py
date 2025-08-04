@@ -193,37 +193,17 @@ def compute_signals(merged_df, atm_strike, ltp):
 
         # numerator = ((itm_ce_price * itm_ce_vol) + (otm_ce_price * otm_ce_vol)) - ((itm_pe_price * itm_pe_vol) + (otm_pe_price * otm_pe_vol))
         # denominator = abs(((itm_ce_price * itm_ce_vol) + (otm_ce_price * otm_ce_vol))) + abs(((itm_pe_price * itm_pe_vol) + (otm_pe_price * otm_pe_vol)))
-            # numerator = ((itm_ce_price * (itm_ce_vol/itm_ce_oi))) - ((itm_pe_price * (itm_pe_vol/itm_pe_oi)) )
-            # denominator = abs(((itm_ce_price * (itm_ce_vol/itm_ce_oi)))) + abs(((itm_pe_price * (itm_pe_vol/itm_pe_oi)) ))
-            # st.write(f"Numerator: {numerator:.2f} | Denominator: {denominator:.2f}")
-            # # st.write(f"ce vol/oi ratio :{itm_ce_vol/itm_ce_oi:.2f} | pe vol/oi ratio :{itm_pe_vol/itm_pe_oi:.2f}")
-            # ratio = numerator / denominator if denominator != 0 else 0
+        numerator = ((itm_ce_price * (itm_ce_vol))) - ((itm_pe_price * (itm_pe_vol)) )
+        denominator = abs(((itm_ce_price * (itm_ce_vol)))) + abs(((itm_pe_price * (itm_pe_vol)) ))
+        st.write(f"Numerator: {numerator:.2f} | Denominator: {denominator:.2f}")
+        ratio = numerator / denominator if denominator != 0 else 0
 
-        if itm_pe_oi > 0 and itm_ce_oi > 0:
-            numerator = ((itm_ce_price * (itm_ce_vol/itm_ce_oi))) - ((itm_pe_price * (itm_pe_vol/itm_pe_oi)) )
-            denominator = abs(((itm_ce_price * (itm_ce_vol/itm_ce_oi)))) + abs(((itm_pe_price * (itm_pe_vol/itm_pe_oi)) ))
-            # st.write(f"Numerator: {numerator:.2f} | Denominator: {denominator:.2f}")
-            # st.write(f"ce vol/oi ratio :{itm_ce_vol/itm_ce_oi:.2f} | pe vol/oi ratio :{itm_pe_vol/itm_pe_oi:.2f}")
-            ratio = numerator / denominator if denominator != 0 else 0
-            # Signal determination              
-            if ratio > 0.5:
-                signal = "BUY"
-            elif ratio < -0.5:
-                signal = "SELL"
-            else:
-                signal = "SIDEWAYS"
-            # st.write(f"Signal: {signal} | Ratio: {ratio:.2f}")
-
+        if ratio > 0.25:
+            signal = "BUY"
+        elif ratio < -0.25:
+            signal = "SELL"
         else:
-            if ((itm_ce_price * (itm_ce_vol/itm_ce_oi))) < ((itm_pe_price * (itm_pe_vol/itm_pe_oi))):
-                signal = "BUY"
-                ratio= 0.0
-            elif ((itm_ce_price * (itm_ce_vol/itm_ce_oi))) > ((itm_pe_price * (itm_pe_vol/itm_pe_oi))):
-                signal = "SELL"
-                ratio= 0.0
-            else:
-                signal = "SIDEWAYS"
-                ratio= 0.0  # Default ratio if no valid calculation
+            signal = "SIDEWAYS"
 
         # Logging for debugging
         logging.info(
