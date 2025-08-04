@@ -172,35 +172,33 @@ def compute_signals(merged_df, atm_strike, ltp):
         # Calculate prices
         itm_pe_price = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
         itm_ce_price = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
-        otm_pe_price = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_ltp"].sum()
-        otm_ce_price = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_ltp"].sum()
+        # otm_pe_price = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_ltp"].sum()
+        # otm_ce_price = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_ltp"].sum()
 
         # Calculate volume
         itm_pe_vol = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_Vol"].sum()
         itm_ce_vol = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_Vol"].sum()
-        otm_pe_vol = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_Vol"].sum()
-        otm_ce_vol = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_Vol"].sum()
+        # otm_pe_vol = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_Vol"].sum()
+        # otm_ce_vol = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_Vol"].sum()
 
 
-        itm_pe_oi = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OICh"].sum()
-        itm_ce_oi = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OICh"].sum()
-        otm_pe_oi = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_OICh"].sum()
-        otm_ce_oi = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OICh"].sum()
+        # itm_pe_oi = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OICh"].sum()
+        # itm_ce_oi = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OICh"].sum()
+        # otm_pe_oi = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_OICh"].sum()
+        # otm_ce_oi = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OICh"].sum()
 
 
-        # ((C itm * CV) - (c otm * PV)) / ((p itm * CV) - (P otm * PV))
-        # C = itm_ce_price P = itm_pe_price   CV=itm_ce_vol sum PV=itm_pe_vol sum
-
-        # numerator = ((itm_ce_price * itm_ce_vol) + (otm_ce_price * otm_ce_vol)) - ((itm_pe_price * itm_pe_vol) + (otm_pe_price * otm_pe_vol))
-        # denominator = abs(((itm_ce_price * itm_ce_vol) + (otm_ce_price * otm_ce_vol))) + abs(((itm_pe_price * itm_pe_vol) + (otm_pe_price * otm_pe_vol)))
         numerator = ((itm_ce_price * (itm_ce_vol))) - ((itm_pe_price * (itm_pe_vol)) )
         denominator = abs(((itm_ce_price * (itm_ce_vol)))) + abs(((itm_pe_price * (itm_pe_vol)) ))
         st.write(f"Numerator: {numerator:.2f} | Denominator: {denominator:.2f}")
+        st.write(f"itm_ce_price: {itm_ce_price:.2f} | itm_pe_price: {itm_pe_price:.2f} ")
         ratio = numerator / denominator if denominator != 0 else 0
 
-        if ratio > 0.25:
+        volume_ratio = (itm_ce_vol - itm_pe_vol) / (itm_ce_vol + itm_pe_vol) if (itm_ce_vol + itm_pe_vol) != 0 else 0
+
+        if ratio > 0.25 and volume_ratio > 0.1:
             signal = "BUY"
-        elif ratio < -0.25:
+        elif ratio < -0.25 and volume_ratio < -0.1:
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
