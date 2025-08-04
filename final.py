@@ -187,11 +187,11 @@ def compute_signals(merged_df, atm_strike, ltp):
         # otm_pe_oi = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_OICh"].sum()
         # otm_ce_oi = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OICh"].sum()
 
-
         numerator = ((itm_ce_price * (itm_ce_vol))) - ((itm_pe_price * (itm_pe_vol)) )
         denominator = abs(((itm_ce_price * (itm_ce_vol)))) + abs(((itm_pe_price * (itm_pe_vol)) ))
-        st.write(f"Numerator: {numerator:.2f} | Denominator: {denominator:.2f}")
-        st.write(f"itm_ce_price: {itm_ce_price:.2f} | itm_pe_price: {itm_pe_price:.2f} ")
+        # st.write(f"Numerator: {numerator:.2f} | Denominator: {denominator:.2f}")
+        # st.write(f"itm_ce_price: {itm_ce_price:.2f} | itm_pe_price: {itm_pe_price:.2f} ")
+        st.write(f"ratio:{ratio} | volume_ratio: {volume_ratio}")
         ratio = numerator / denominator if denominator != 0 else 0
 
         volume_ratio = (itm_ce_vol - itm_pe_vol) / (itm_ce_vol + itm_pe_vol) if (itm_ce_vol + itm_pe_vol) != 0 else 0
