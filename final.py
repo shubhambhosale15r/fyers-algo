@@ -22,7 +22,7 @@ st.set_page_config(
 )
 # Constants
 class Config:
-    REFRESH_INTERVAL = 60  # seconds
+    REFRESH_INTERVAL = 10  # seconds
     API_RATE_LIMIT = 200
     API_WINDOW = 60  # seconds
     LOT_SIZE = 75 
@@ -149,68 +149,135 @@ def get_symbol_ltp(cid, token, symbol):
     return resp["d"][0]["v"]["lp"]
 
 # Signal computation with improved logging
-def compute_signals(merged_df, atm_strike, ltp):
-    try:
-        strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
-        idx = strikes.index(atm_strike)
+# def compute_signals(merged_df, atm_strike, ltp):
+#     try:
+#         strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
+#         idx = strikes.index(atm_strike)
         
-        # ATM Strike and atm ce and atm pe prices
-        atm_row = merged_df[merged_df["Strike"] == atm_strike]
-        atm_ce_price = atm_row["CE_ltp"].values[0] if "CE_ltp" in atm_row else None
-        atm_pe_price = atm_row["PE_ltp"].values[0] if "PE_ltp" in atm_row else None
+#         # ATM Strike and atm ce and atm pe prices
+#         atm_row = merged_df[merged_df["Strike"] == atm_strike]
+#         atm_ce_price = atm_row["CE_ltp"].values[0] if "CE_ltp" in atm_row else None
+#         atm_pe_price = atm_row["PE_ltp"].values[0] if "PE_ltp" in atm_row else None
 
-        # Identify ITM strikes
-        ce_itm_strikes = strikes[max(0, idx-5):idx] if idx >= 1 else []
-        pe_itm_strikes = strikes[idx+1:min(len(strikes), idx+6)] if idx < len(strikes) - 1 else []
+#         # Identify ITM strikes
+#         ce_itm_strikes = strikes[max(0, idx-5):idx] if idx >= 1 else []
+#         pe_itm_strikes = strikes[idx+1:min(len(strikes), idx+6)] if idx < len(strikes) - 1 else []
 
-        # Identify OTM strikes
-        ce_otm_strikes = strikes[idx+1:min(len(strikes), idx+6)] if idx < len(strikes) - 1 else []
-        pe_otm_strikes = strikes[max(0, idx-5):idx] if idx >= 1 else []
-        # st.write(f"ITM Strikes: CE {ce_itm_strikes} | PE{pe_itm_strikes}")
+#         # Identify OTM strikes
+#         ce_otm_strikes = strikes[idx+1:min(len(strikes), idx+6)] if idx < len(strikes) - 1 else []
+#         pe_otm_strikes = strikes[max(0, idx-5):idx] if idx >= 1 else []
+#         # st.write(f"ITM Strikes: CE {ce_itm_strikes} | PE{pe_itm_strikes}")
        
 
-        # Calculate prices
-        itm_pe_price = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
-        itm_ce_price = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
-        # otm_pe_price = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_ltp"].sum()
-        # otm_ce_price = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_ltp"].sum()
+#         # Calculate prices
+#         itm_pe_price = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
+#         itm_ce_price = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
+#         # otm_pe_price = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_ltp"].sum()
+#         # otm_ce_price = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_ltp"].sum()
 
-        # Calculate volume
-        itm_pe_vol = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_Vol"].sum()
-        itm_ce_vol = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_Vol"].sum()
-        # otm_pe_vol = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_Vol"].sum()
-        # otm_ce_vol = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_Vol"].sum()
+#         # Calculate volume
+#         itm_pe_vol = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_Vol"].sum()
+#         itm_ce_vol = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_Vol"].sum()
+#         # otm_pe_vol = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_Vol"].sum()
+#         # otm_ce_vol = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_Vol"].sum()
 
 
-        # itm_pe_oi = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OICh"].sum()
-        # itm_ce_oi = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OICh"].sum()
-        # otm_pe_oi = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_OICh"].sum()
-        # otm_ce_oi = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OICh"].sum()
+#         # itm_pe_oi = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OICh"].sum()
+#         # itm_ce_oi = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OICh"].sum()
+#         # otm_pe_oi = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_OICh"].sum()
+#         # otm_ce_oi = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OICh"].sum()
 
-        numerator = ((itm_ce_price * (itm_ce_vol))) - ((itm_pe_price * (itm_pe_vol)) )
-        denominator = abs(((itm_ce_price * (itm_ce_vol)))) + abs(((itm_pe_price * (itm_pe_vol)) ))
-        # st.write(f"Numerator: {numerator:.2f} | Denominator: {denominator:.2f}")
-        # st.write(f"itm_ce_price: {itm_ce_price:.2f} | itm_pe_price: {itm_pe_price:.2f} ")
+#         numerator = ((itm_ce_price * (itm_ce_vol))) - ((itm_pe_price * (itm_pe_vol)) )
+#         denominator = abs(((itm_ce_price * (itm_ce_vol)))) + abs(((itm_pe_price * (itm_pe_vol)) ))
+#         # st.write(f"Numerator: {numerator:.2f} | Denominator: {denominator:.2f}")
+#         # st.write(f"itm_ce_price: {itm_ce_price:.2f} | itm_pe_price: {itm_pe_price:.2f} ")
         
+#         ratio = numerator / denominator if denominator != 0 else 0
+
+#         volume_ratio = (itm_ce_vol - itm_pe_vol) / (itm_ce_vol + itm_pe_vol) if (itm_ce_vol + itm_pe_vol) != 0 else 0
+#         itm_ce_moneyflow = itm_ce_price * itm_ce_vol
+#         itm_pe_moneyflow = itm_pe_price * itm_pe_vol
+#         itm_ce_efficiency = itm_ce_moneyflow / itm_ce_vol if itm_ce_vol else 0
+#         itm_pe_efficiency = itm_pe_moneyflow / itm_pe_vol if itm_pe_vol else 0
+#         efficiency_ratio = (
+#             (itm_ce_efficiency - itm_pe_efficiency) / 
+#             (itm_ce_efficiency + itm_pe_efficiency)
+#             if (itm_ce_efficiency + itm_pe_efficiency) != 0 else 0
+#         )
+
+#         st.write(f"ratio:{ratio} | volume_ratio: {volume_ratio} | efficiency Ratio: {efficiency_ratio:.2f}")
+#         if ratio > 0.33 and volume_ratio > 0.33 and efficiency_ratio > 0:
+#             signal = "BUY"
+#         elif ratio < -0.33 and volume_ratio < -0.33 and efficiency_ratio < 0:
+#             signal = "SELL"
+#         else:
+#             signal = "SIDEWAYS"
+
+#         # Logging for debugging
+#         logging.info(
+#             f"Signal Computation: "
+#             f"ratio={ratio:.2f}, "
+#             f"signal={signal}"
+#         )
+
+#         return signal,ratio
+
+#     except Exception as e:
+#         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
+#         return "SIDEWAYS", 0
+def compute_signals(merged_df, atm_strike, ltp):
+    try:
+        # ATM prices
+        atm_row = merged_df[merged_df["Strike"] == atm_strike]
+        atm_ce_price = atm_row["CE_ltp"].values[0]
+        atm_pe_price = atm_row["PE_ltp"].values[0]
+
+        # Define ITM strikes
+        strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
+        idx = strikes.index(atm_strike)
+        ce_itm_strikes = strikes[max(0, idx-5):idx]
+        pe_itm_strikes = strikes[idx+1:min(len(strikes), idx+6)]
+
+        # Filter DF
+        ce_itm_df = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]
+        pe_itm_df = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]
+
+        # Compute moneyflow
+        itm_ce_moneyflow = (ce_itm_df["CE_ltp"] * ce_itm_df["CE_Vol"]).sum()
+        itm_pe_moneyflow = (pe_itm_df["PE_ltp"] * pe_itm_df["PE_Vol"]).sum()
+
+        # Compute volume
+        itm_ce_vol = ce_itm_df["CE_Vol"].sum()
+        itm_pe_vol = pe_itm_df["PE_Vol"].sum()
+
+        # Core directional ratio
+        numerator = itm_ce_moneyflow - itm_pe_moneyflow
+        denominator = abs(itm_ce_moneyflow) + abs(itm_pe_moneyflow)
         ratio = numerator / denominator if denominator != 0 else 0
 
+        # Volume bias
         volume_ratio = (itm_ce_vol - itm_pe_vol) / (itm_ce_vol + itm_pe_vol) if (itm_ce_vol + itm_pe_vol) != 0 else 0
-        st.write(f"ratio:{ratio} | volume_ratio: {volume_ratio}")
-        if ratio > 0.33 and volume_ratio > 0.33:
+
+        # Efficiency ratio
+        itm_ce_efficiency = itm_ce_moneyflow / itm_ce_vol if itm_ce_vol else 0
+        itm_pe_efficiency = itm_pe_moneyflow / itm_pe_vol if itm_pe_vol else 0
+        efficiency_ratio = (
+            (itm_ce_efficiency - itm_pe_efficiency) /
+            (itm_ce_efficiency + itm_pe_efficiency)
+            if (itm_ce_efficiency + itm_pe_efficiency) != 0 else 0
+        )
+
+        # Signal logic
+        if ratio > 0.3 and efficiency_ratio > 0.1 and volume_ratio > 0.1:
             signal = "BUY"
-        elif ratio < -0.33 and volume_ratio < -0.33:
+        elif ratio < -0.3 and efficiency_ratio < -0.1 and volume_ratio < -0.1:
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
 
-        # Logging for debugging
-        logging.info(
-            f"Signal Computation: "
-            f"ratio={ratio:.2f}, "
-            f"signal={signal}"
-        )
-
-        return signal,ratio
+        st.write(f"ratio: {ratio:.2f} | volume_ratio: {volume_ratio:.2f} | efficiency_ratio: {efficiency_ratio:.2f}")
+        logging.info(f"Signal Computation: ratio={ratio:.2f}, signal={signal}")
+        return signal, ratio
 
     except Exception as e:
         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
