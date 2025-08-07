@@ -268,9 +268,9 @@ def compute_signals(merged_df, atm_strike, ltp):
         )
 
         # Signal logic
-        if ratio > 0.3 and efficiency_ratio > 0.1 and volume_ratio > 0.1:
+        if ratio > 0.3  and volume_ratio > 0.3 and efficiency_ratio < 0:
             signal = "BUY"
-        elif ratio < -0.3 and efficiency_ratio < -0.1 and volume_ratio < -0.1:
+        elif ratio < -0.3  and volume_ratio < 0.3 and efficiency_ratio > 0:
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
