@@ -274,6 +274,10 @@ def compute_signals(merged_df, atm_strike, ltp):
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
+            if ratio > 0.3 and  volume_ratio > 0.3 and efficiency_ratio > 0:
+                st.write(f"Market in buy waiting for a pullback")
+            elif ratio < -0.3 and volume_ratio < -0.3 and efficiency_ratio < 0:
+                st.write(f"Market in sell waiting for a pullback")
 
         st.write(f"ratio: {ratio:.2f} | volume_ratio: {volume_ratio:.2f} | efficiency_ratio: {efficiency_ratio:.2f}")
         logging.info(f"Signal Computation: ratio={ratio:.2f}, signal={signal}")
