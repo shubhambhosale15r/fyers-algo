@@ -231,6 +231,53 @@ def compute_signals(merged_df, atm_strike, ltp):
         atm_row = merged_df[merged_df["Strike"] == atm_strike]
         atm_ce_price = atm_row["CE_ltp"].values[0]
         atm_pe_price = atm_row["PE_ltp"].values[0]
+        atm_ce_vol = atm_row["CE_Vol"].values[0]
+        atm_pe_vol = atm_row["PE_Vol"].values[0]
+        atm_moneyflow_ce = atm_ce_price * atm_ce_vol
+        atm_moneyflow_pe = atm_pe_price * atm_pe_vol
+
+
+
+        atm_strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
+        idx_atm = atm_strikes.index(atm_strike)
+        atm_minus1 = atm_strikes[max(0, idx_atm-1):idx_atm]
+        atm_plus1 = atm_strikes[idx_atm+1:min(len(atm_strikes), idx_atm+2)]
+        atm_plus1_df = merged_df[merged_df["Strike"].isin(atm_plus1)]
+        atm_minus1_df = merged_df[merged_df["Strike"].isin(atm_minus1)]
+
+        # calculate put call parity (PCP) bias ratios
+        pcp_bias_ratios = []
+
+        # Loop through atm-1, atm, atm+1
+        for strike in [atm_minus1_df["Strike"].values[0], atm_strike, atm_plus1_df["Strike"].values[0]]:
+            row = merged_df[merged_df["Strike"] == strike]
+            if not row.empty:
+                ce_ltp = row["CE_ltp"].values[0]
+                pe_ltp = row["PE_ltp"].values[0]
+
+                # PCP difference
+                pcp_diff = ce_ltp - pe_ltp - (ltp - strike)
+
+                # Average option price for normalization
+                avg_option_price = (ce_ltp + pe_ltp) / 2
+
+                if avg_option_price != 0:
+                    pcp_bias = pcp_diff / avg_option_price
+                    # Cap to [-1, 1] to prevent spikes
+                    pcp_bias = max(-1, min(1, pcp_bias))
+                else:
+                    pcp_bias = 0
+
+                pcp_bias_ratios.append(pcp_bias)
+
+                # st.write(
+                #     f"Strike: {strike} | CE: {ce_ltp} | PE: {pe_ltp} | "
+                #     f"PCP Diff: {pcp_diff:.2f} | PCP Bias: {pcp_bias:.2f}"
+                #     f" pcp_bias_ratios: {pcp_bias_ratios}"
+                # )
+
+        # You can then average across atm-1, atm, atm+1
+        final_pcp_bias_ratio = sum(pcp_bias_ratios) / len(pcp_bias_ratios) if pcp_bias_ratios else 0
 
         # Define ITM strikes
         strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
@@ -258,28 +305,16 @@ def compute_signals(merged_df, atm_strike, ltp):
         # Volume bias
         volume_ratio = (itm_ce_vol - itm_pe_vol) / (itm_ce_vol + itm_pe_vol) if (itm_ce_vol + itm_pe_vol) != 0 else 0
 
-        # Efficiency ratio
-        itm_ce_efficiency = itm_ce_moneyflow / itm_ce_vol if itm_ce_vol else 0
-        itm_pe_efficiency = itm_pe_moneyflow / itm_pe_vol if itm_pe_vol else 0
-        efficiency_ratio = (
-            (itm_ce_efficiency - itm_pe_efficiency) /
-            (itm_ce_efficiency + itm_pe_efficiency)
-            if (itm_ce_efficiency + itm_pe_efficiency) != 0 else 0
-        )
-
         # Signal logic
-        if ratio > 0.3  and volume_ratio > 0.3 and efficiency_ratio < 0:
+        if ratio > 0.3  and volume_ratio > 0.3  and final_pcp_bias_ratio > 0:
             signal = "BUY"
-        elif ratio < -0.3  and volume_ratio < 0.3 and efficiency_ratio > 0:
+        elif ratio < -0.3  and volume_ratio < 0.3  and final_pcp_bias_ratio < 0:
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
-            if ratio > 0.3 and  volume_ratio > 0.3 and efficiency_ratio > 0:
-                st.write(f"Market in buy waiting for a pullback")
-            elif ratio < -0.3 and volume_ratio < -0.3 and efficiency_ratio < 0:
-                st.write(f"Market in sell waiting for a pullback")
 
-        st.write(f"ratio: {ratio:.2f} | volume_ratio: {volume_ratio:.2f} | efficiency_ratio: {efficiency_ratio:.2f}")
+
+        st.write(f"ratio: {ratio:.2f} | volume_ratio: {volume_ratio:.2f} | final_pcp_bias_ratio: {final_pcp_bias_ratio:.2f}")
         logging.info(f"Signal Computation: ratio={ratio:.2f}, signal={signal}")
         return signal, ratio
 
@@ -805,7 +840,7 @@ def format_and_show(chain, title, ltp, show_signals=False):
        
         
         # Display results with improved formatting
-        st.metric(" Signal", signal)
+        st.write(" Signal", signal)
         # st.metric("Ratio: ",ratio)
 
         # st.write("---")
