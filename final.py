@@ -148,174 +148,110 @@ def get_symbol_ltp(cid, token, symbol):
         return None
     return resp["d"][0]["v"]["lp"]
 
-# Signal computation with improved logging
-# def compute_signals(merged_df, atm_strike, ltp):
-#     try:
-#         strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
-#         idx = strikes.index(atm_strike)
-        
-#         # ATM Strike and atm ce and atm pe prices
-#         atm_row = merged_df[merged_df["Strike"] == atm_strike]
-#         atm_ce_price = atm_row["CE_ltp"].values[0] if "CE_ltp" in atm_row else None
-#         atm_pe_price = atm_row["PE_ltp"].values[0] if "PE_ltp" in atm_row else None
-
-#         # Identify ITM strikes
-#         ce_itm_strikes = strikes[max(0, idx-5):idx] if idx >= 1 else []
-#         pe_itm_strikes = strikes[idx+1:min(len(strikes), idx+6)] if idx < len(strikes) - 1 else []
-
-#         # Identify OTM strikes
-#         ce_otm_strikes = strikes[idx+1:min(len(strikes), idx+6)] if idx < len(strikes) - 1 else []
-#         pe_otm_strikes = strikes[max(0, idx-5):idx] if idx >= 1 else []
-#         # st.write(f"ITM Strikes: CE {ce_itm_strikes} | PE{pe_itm_strikes}")
-       
-
-#         # Calculate prices
-#         itm_pe_price = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_ltp"].sum()
-#         itm_ce_price = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_ltp"].sum()
-#         # otm_pe_price = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_ltp"].sum()
-#         # otm_ce_price = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_ltp"].sum()
-
-#         # Calculate volume
-#         itm_pe_vol = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_Vol"].sum()
-#         itm_ce_vol = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_Vol"].sum()
-#         # otm_pe_vol = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_Vol"].sum()
-#         # otm_ce_vol = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_Vol"].sum()
-
-
-#         # itm_pe_oi = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]["PE_OICh"].sum()
-#         # itm_ce_oi = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]["CE_OICh"].sum()
-#         # otm_pe_oi = merged_df[merged_df["Strike"].isin(pe_otm_strikes)]["PE_OICh"].sum()
-#         # otm_ce_oi = merged_df[merged_df["Strike"].isin(ce_otm_strikes)]["CE_OICh"].sum()
-
-#         numerator = ((itm_ce_price * (itm_ce_vol))) - ((itm_pe_price * (itm_pe_vol)) )
-#         denominator = abs(((itm_ce_price * (itm_ce_vol)))) + abs(((itm_pe_price * (itm_pe_vol)) ))
-#         # st.write(f"Numerator: {numerator:.2f} | Denominator: {denominator:.2f}")
-#         # st.write(f"itm_ce_price: {itm_ce_price:.2f} | itm_pe_price: {itm_pe_price:.2f} ")
-        
-#         ratio = numerator / denominator if denominator != 0 else 0
-
-#         volume_ratio = (itm_ce_vol - itm_pe_vol) / (itm_ce_vol + itm_pe_vol) if (itm_ce_vol + itm_pe_vol) != 0 else 0
-#         itm_ce_moneyflow = itm_ce_price * itm_ce_vol
-#         itm_pe_moneyflow = itm_pe_price * itm_pe_vol
-#         itm_ce_efficiency = itm_ce_moneyflow / itm_ce_vol if itm_ce_vol else 0
-#         itm_pe_efficiency = itm_pe_moneyflow / itm_pe_vol if itm_pe_vol else 0
-#         efficiency_ratio = (
-#             (itm_ce_efficiency - itm_pe_efficiency) / 
-#             (itm_ce_efficiency + itm_pe_efficiency)
-#             if (itm_ce_efficiency + itm_pe_efficiency) != 0 else 0
-#         )
-
-#         st.write(f"ratio:{ratio} | volume_ratio: {volume_ratio} | efficiency Ratio: {efficiency_ratio:.2f}")
-#         if ratio > 0.33 and volume_ratio > 0.33 and efficiency_ratio > 0:
-#             signal = "BUY"
-#         elif ratio < -0.33 and volume_ratio < -0.33 and efficiency_ratio < 0:
-#             signal = "SELL"
-#         else:
-#             signal = "SIDEWAYS"
-
-#         # Logging for debugging
-#         logging.info(
-#             f"Signal Computation: "
-#             f"ratio={ratio:.2f}, "
-#             f"signal={signal}"
-#         )
-
-#         return signal,ratio
-
-#     except Exception as e:
-#         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
-#         return "SIDEWAYS", 0
+# Signal computation with improved error handling
 def compute_signals(merged_df, atm_strike, ltp):
     try:
-        # ATM prices
-        atm_row = merged_df[merged_df["Strike"] == atm_strike]
-        atm_ce_price = atm_row["CE_ltp"].values[0]
-        atm_pe_price = atm_row["PE_ltp"].values[0]
-        atm_ce_vol = atm_row["CE_Vol"].values[0]
-        atm_pe_vol = atm_row["PE_Vol"].values[0]
-        atm_moneyflow_ce = atm_ce_price * atm_ce_vol
-        atm_moneyflow_pe = atm_pe_price * atm_pe_vol
+        # Helper: safely get from a Series, else default
+        def safe_val(series, default=0):
+            if series.empty:
+                return default
+            val = series.iloc[0]
+            return default if pd.isna(val) else val
 
-
-
-        atm_strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
-        idx_atm = atm_strikes.index(atm_strike)
-        atm_minus1 = atm_strikes[max(0, idx_atm-1):idx_atm]
-        atm_plus1 = atm_strikes[idx_atm+1:min(len(atm_strikes), idx_atm+2)]
-        atm_plus1_df = merged_df[merged_df["Strike"].isin(atm_plus1)]
-        atm_minus1_df = merged_df[merged_df["Strike"].isin(atm_minus1)]
-
-        # calculate put call parity (PCP) bias ratios
-        pcp_bias_ratios = []
-
-        # Loop through atm-1, atm, atm+1
-        for strike in [atm_minus1_df["Strike"].values[0], atm_strike, atm_plus1_df["Strike"].values[0]]:
-            row = merged_df[merged_df["Strike"] == strike]
-            if not row.empty:
-                ce_ltp = row["CE_ltp"].values[0]
-                pe_ltp = row["PE_ltp"].values[0]
-
-                # PCP difference
-                pcp_diff = ce_ltp - pe_ltp - (ltp - strike)
-
-                # Average option price for normalization
-                avg_option_price = (ce_ltp + pe_ltp) / 2
-
-                if avg_option_price != 0:
-                    pcp_bias = pcp_diff / avg_option_price
-                    # Cap to [-1, 1] to prevent spikes
-                    pcp_bias = max(-1, min(1, pcp_bias))
-                else:
-                    pcp_bias = 0
-
-                pcp_bias_ratios.append(pcp_bias)
-
-                # st.write(
-                #     f"Strike: {strike} | CE: {ce_ltp} | PE: {pe_ltp} | "
-                #     f"PCP Diff: {pcp_diff:.2f} | PCP Bias: {pcp_bias:.2f}"
-                #     f" pcp_bias_ratios: {pcp_bias_ratios}"
-                # )
-
-        # You can then average across atm-1, atm, atm+1
-        final_pcp_bias_ratio = sum(pcp_bias_ratios) / len(pcp_bias_ratios) if pcp_bias_ratios else 0
-
-        # Define ITM strikes
+        # Ensure Strike list
         strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
-        idx = strikes.index(atm_strike)
-        ce_itm_strikes = strikes[max(0, idx-5):idx]
-        pe_itm_strikes = strikes[idx+1:min(len(strikes), idx+6)]
+        if not strikes:
+            logging.error("No valid strikes in data")
+            return "SIDEWAYS", 0
 
-        # Filter DF
+        # ATM strike fallback
+        if atm_strike not in strikes:
+            atm_strike = min(strikes, key=lambda s: abs(s - atm_strike))
+
+        idx_atm = strikes.index(atm_strike)
+
+        # Precompute columns to avoid multiple lookups
+        merged_df = merged_df.fillna(0)
+        merged_df["CE_moneyflow"] = merged_df["CE_ltp"] * merged_df["CE_Vol"]
+        merged_df["PE_moneyflow"] = merged_df["PE_ltp"] * merged_df["PE_Vol"]
+        merged_df["Straddle"] = merged_df["CE_ltp"] + merged_df["PE_ltp"]
+
+        # ATM row
+        atm_row = merged_df[merged_df["Strike"] == atm_strike]
+        atm_ce_price = safe_val(atm_row["CE_ltp"])
+        atm_pe_price = safe_val(atm_row["PE_ltp"])
+        atm_ce_vol = safe_val(atm_row["CE_Vol"])
+        atm_pe_vol = safe_val(atm_row["PE_Vol"])
+
+        # atm_moneyflow_ce = atm_ce_price * atm_ce_vol
+        # atm_moneyflow_pe = atm_pe_price * atm_pe_vol
+
+        # Neighbor strikes: -1, ATM, +1
+        neighbor_strikes = [
+            strikes[max(0, idx_atm - 1)] if idx_atm > 0 else None,
+            atm_strike,
+            strikes[idx_atm + 1] if idx_atm < len(strikes) - 1 else None
+        ]
+        neighbor_strikes = [s for s in neighbor_strikes if s is not None]
+
+        neighbor_df = merged_df[merged_df["Strike"].isin(neighbor_strikes)]
+        straddle_map = dict(zip(neighbor_df["Strike"], neighbor_df["Straddle"]))
+
+        atm_minus1_straddle = straddle_map.get(strikes[idx_atm - 1], 0) if idx_atm > 0 else 0
+        atm_strike_straddle = straddle_map.get(atm_strike, 0)
+        atm_plus1_straddle = straddle_map.get(strikes[idx_atm + 1], 0) if idx_atm < len(strikes) - 1 else 0
+
+        straddles = [v for v in [atm_minus1_straddle, atm_strike_straddle, atm_plus1_straddle] if v > 0]
+        avg_straddle_price = np.mean(straddles) if straddles else 0
+
+        # st.write(f"ATM Straddle Prices: -1: {atm_minus1_straddle:.2f}, "
+        #         f"ATM: {atm_strike_straddle:.2f}, +1: {atm_plus1_straddle:.2f} "
+        #         f"| Avg: {avg_straddle_price:.2f}")
+
+        # Sentiment
+        if avg_straddle_price > 0:
+            if atm_plus1_straddle > avg_straddle_price and atm_minus1_straddle < avg_straddle_price:
+                straddle_sentiment = "positive"
+            elif atm_minus1_straddle > avg_straddle_price and atm_plus1_straddle < avg_straddle_price:
+                straddle_sentiment = "negative"
+            else:
+                straddle_sentiment = "neutral"
+        else:
+            straddle_sentiment = "neutral"
+
+        # ITM strikes for CE & PE
+        ce_itm_strikes = strikes[max(0, idx_atm - 5):idx_atm]
+        pe_itm_strikes = strikes[idx_atm + 1:min(len(strikes), idx_atm + 6)]
+
         ce_itm_df = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]
         pe_itm_df = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]
 
-        # Compute moneyflow
-        itm_ce_moneyflow = (ce_itm_df["CE_ltp"] * ce_itm_df["CE_Vol"]).sum()
-        itm_pe_moneyflow = (pe_itm_df["PE_ltp"] * pe_itm_df["PE_Vol"]).sum()
+        itm_ce_moneyflow = ce_itm_df["CE_moneyflow"].sum()
+        itm_pe_moneyflow = pe_itm_df["PE_moneyflow"].sum()
 
-        # Compute volume
         itm_ce_vol = ce_itm_df["CE_Vol"].sum()
         itm_pe_vol = pe_itm_df["PE_Vol"].sum()
 
-        # Core directional ratio
+        # Ratios
         numerator = itm_ce_moneyflow - itm_pe_moneyflow
         denominator = abs(itm_ce_moneyflow) + abs(itm_pe_moneyflow)
         ratio = numerator / denominator if denominator != 0 else 0
 
-        # Volume bias
-        volume_ratio = (itm_ce_vol - itm_pe_vol) / (itm_ce_vol + itm_pe_vol) if (itm_ce_vol + itm_pe_vol) != 0 else 0
+        volume_ratio = ((itm_ce_vol - itm_pe_vol) / (itm_ce_vol + itm_pe_vol)
+                        if (itm_ce_vol + itm_pe_vol) != 0 else 0)
 
         # Signal logic
-        if ratio > 0.3  and volume_ratio > 0.3  and final_pcp_bias_ratio > 0:
+        if ratio > 0.33 and volume_ratio > 0.33 and straddle_sentiment == "positive":
             signal = "BUY"
-        elif ratio < -0.3  and volume_ratio < -0.3  and final_pcp_bias_ratio < 0:
+        elif ratio < -0.33 and volume_ratio < -0.33 and straddle_sentiment == "negative":
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
 
-
-        st.write(f"ratio: {ratio:.2f} | volume_ratio: {volume_ratio:.2f} | final_pcp_bias_ratio: {final_pcp_bias_ratio:.2f}")
+        st.write(f"ratio: {ratio:.2f} | volume_ratio: {volume_ratio:.2f} | "
+                f"straddle_sentiment: {straddle_sentiment}")
         logging.info(f"Signal Computation: ratio={ratio:.2f}, signal={signal}")
+
         return signal, ratio
 
     except Exception as e:
@@ -837,15 +773,9 @@ def format_and_show(chain, title, ltp, show_signals=False):
         strikes = sorted(merged["Strike"].dropna().unique().tolist())
         idx = strikes.index(atm)
         signal,ratio = compute_signals(merged, atm, ltp)
-       
-        
-        # Display results with improved formatting
-        st.write(" Signal", signal)
-        # st.metric("Ratio: ",ratio)
+       # Display results with improved formatting
+        st.success(f"Signal: {signal}")
 
-        # st.write("---")
-        st.write(f"Ratio: {ratio:.2f}")
-   
     # Highlight ATM row in the dataframe
     styled = merged.style.apply(
         lambda row: ["background: yellow" if row["Strike"] == atm else "" for _ in row],
