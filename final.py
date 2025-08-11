@@ -338,9 +338,9 @@ def compute_signals(merged_df, atm_strike, ltp):
         volume_ratio = (itm_ce_vol - itm_pe_vol) / (itm_ce_vol + itm_pe_vol) if (itm_ce_vol + itm_pe_vol) != 0 else 0
 
         # Signal logic
-        if ratio > 0.3  and volume_ratio > 0.3  and final_pcp_bias_ratio > 0:
+        if ratio > 0.33  and volume_ratio > 0.33  and final_pcp_bias_ratio > 0:
             signal = "BUY"
-        elif ratio < -0.3  and volume_ratio < -0.3  and final_pcp_bias_ratio < 0:
+        elif ratio < -0.33  and volume_ratio < -0.33  and final_pcp_bias_ratio < 0:
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
