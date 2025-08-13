@@ -251,16 +251,17 @@ def compute_signals(merged_df, atm_strike, ltp):
         broad_df = merged_df[merged_df["Strike"].isin(broad_strikes)]
         # st.write(f" ce {broad_df[broad_df["Strike"].isin(ce_itm_strikes)]["Straddle"]}")
 
-        ce_side_avg = broad_df[broad_df["Strike"].isin(ce_itm_strikes)]["Straddle"].mean()
-        pe_side_avg = broad_df[broad_df["Strike"].isin(pe_itm_strikes)]["Straddle"].mean()
+        # Average ITM CE price
+        avg_itm_ce_price = ce_itm_df["CE_ltp"].mean()
+        # Average ITM PE price
+        avg_itm_pe_price = pe_itm_df["PE_ltp"].mean()
 
-
-        if pe_side_avg >  ce_side_avg:
-            straddle_sentiment = "positive"
-        elif ce_side_avg > pe_side_avg:
-            straddle_sentiment = "negative"
+        if avg_itm_ce_price > avg_itm_pe_price:
+            sentiment = "positive"
+        elif avg_itm_pe_price > avg_itm_ce_price:
+            sentiment = "negative"
         else:
-            straddle_sentiment = "neutral"
+            sentiment = "neutral"
 
         # ==== RATIO & VOLUME RATIO ====
         itm_ce_moneyflow = ce_itm_df["CE_moneyflow"].sum()
@@ -277,16 +278,16 @@ def compute_signals(merged_df, atm_strike, ltp):
                         if (itm_ce_vol + itm_pe_vol) != 0 else 0)
 
         # ==== SIGNAL LOGIC ====
-        if ratio > 0.33 and volume_ratio > 0.33 and straddle_sentiment == "positive":
+        if ratio > 0.33 and volume_ratio > 0.33 and sentiment == "positive":
             signal = "BUY"
-        elif ratio < -0.33 and volume_ratio < -0.33 and straddle_sentiment == "negative":
+        elif ratio < -0.33 and volume_ratio < -0.33 and sentiment == "negative":
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
 
         st.write(f"ratio: {ratio:.2f} | volume_ratio: {volume_ratio:.2f} | "
-                 f"straddle_sentiment: {straddle_sentiment} "
-                 f"| CE_straddle_avg: {ce_side_avg:.2f} | PE_straddle_avg: {pe_side_avg:.2f}")
+                 f"straddle_sentiment: {sentiment} "
+                 f"| CE_itm_avg: {avg_itm_ce_price:.2f} | PE_itm_avg: {avg_itm_pe_price:.2f}")
 
         logging.info(f"Signal Computation: ratio={ratio:.2f}, signal={signal}")
 
