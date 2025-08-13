@@ -286,7 +286,7 @@ def compute_signals(merged_df, atm_strike, ltp):
             signal = "SIDEWAYS"
 
         st.write(f"ratio: {ratio:.2f} | volume_ratio: {volume_ratio:.2f} | "
-                 f"straddle_sentiment: {sentiment} "
+                 f"sentiment: {sentiment} "
                  f"| CE_itm_avg: {avg_itm_ce_price:.2f} | PE_itm_avg: {avg_itm_pe_price:.2f}")
 
         logging.info(f"Signal Computation: ratio={ratio:.2f}, signal={signal}")
