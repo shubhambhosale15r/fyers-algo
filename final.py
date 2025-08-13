@@ -10,7 +10,7 @@ import uuid
 from streamlit_autorefresh import st_autorefresh
 from functools import lru_cache
 import os
-# from dotenv import load_dotenv
+
 
 
 #setting wide mode as default
@@ -224,11 +224,11 @@ def compute_signals(merged_df, atm_strike, ltp, price_tolerance=1):
 
         logging.info(f"Signal Computation: ratio={ratio:.2f}, volume_ratio={volume_ratio:.2f}, signal={signal}")
 
-        return signal, ratio
+        return signal, ratio, volume_ratio
 
     except Exception as e:
         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
-        return "SIDEWAYS", 0
+        return "SIDEWAYS", 0, 0
 
 # Optimized strike selection
 def select_strikes_atm_half_price(chain, atm_strike):
@@ -744,7 +744,7 @@ def format_and_show(chain, title, ltp, show_signals=False):
         # Calculate all required metrics
         strikes = sorted(merged["Strike"].dropna().unique().tolist())
         idx = strikes.index(atm)
-        signal,ratio = compute_signals(merged, atm, ltp)
+        signal, ratio, volume_ratio = compute_signals(merged, atm, ltp)
        # Display results with improved formatting
         st.success(f"Signal: {signal}")
 
@@ -758,7 +758,7 @@ def format_and_show(chain, title, ltp, show_signals=False):
     st.caption(f"ATM Strike: {atm} | Underlying LTP: {ltp}")
     
     if show_signals and atm is not None:
-        return signal, atm
+        return signal, atm, ratio, volume_ratio
     return None, atm
 
 
@@ -803,14 +803,14 @@ def show_signal_history():
     
     history_df = pd.DataFrame(st.session_state.signal_history)
     history_df = history_df.sort_values("timestamp", ascending=False)
-    
     formatted_df = history_df.copy()
     formatted_df["underlying_ltp"] = formatted_df["underlying_ltp"].apply(
         lambda x: f"₹{x:.2f}" if isinstance(x, (int, float)) else x
     )
-    
+
     st.dataframe(formatted_df)
-    
+    st.line_chart(formatted_df.set_index("timestamp")[["ratio", "volume_ratio","underlying_ltp"]], use_container_width=True)
+
     csv = history_df.to_csv(index=False)
     st.download_button(
         label="Download Signal History",
@@ -971,13 +971,15 @@ def main():
     st.subheader("📈 Live Trading")
 
     if chain:
-        signal, atm = format_and_show(chain, f"Current Expiry: {curr_date}", ltp, show_signals=True)
+        signal, atm, ratio, volume_ratio = format_and_show(chain, f"Current Expiry: {curr_date}", ltp, show_signals=True)
 
         # Record signal history
         if signal and ltp:
             timestamp = datetime.now(ist).strftime("%Y-%m-%d %H:%M:%S")
             st.session_state.signal_history.append({
                 "timestamp": timestamp,
+                "ratio": ratio,
+                "volume_ratio": volume_ratio,
                 "signal": signal,
                 "underlying_ltp": ltp,
                 "expiry_date": curr_date
