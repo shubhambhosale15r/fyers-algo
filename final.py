@@ -149,10 +149,9 @@ def get_symbol_ltp(cid, token, symbol):
     return resp["d"][0]["v"]["lp"]
 
 # Signal computation with improved error handling
-def compute_signals(merged_df, atm_strike, ltp, price_tolerance=1):
+def compute_signals(merged_df, atm_strike, ltp): 
     """
     Compute BUY/SELL/SIDEWAYS signal based on money flow, volume ratio, and ATM CE/PE fair price check.
-    price_tolerance: max allowed difference between ATM CE & PE prices to consider 'fair'.
     """
     try:
         def safe_val(series, default=0):
@@ -207,9 +206,20 @@ def compute_signals(merged_df, atm_strike, ltp, price_tolerance=1):
         volume_ratio = ((itm_ce_vol - itm_pe_vol) / (itm_ce_vol + itm_pe_vol)
                         if (itm_ce_vol + itm_pe_vol) != 0 else 0)
 
-        # Fair price check
-        price_diff = abs(atm_ce_price - atm_pe_price)
-        fair_price = price_diff <= price_tolerance
+        # ==== Dynamic Fair Price Check using Put-Call Parity ====
+        expected_diff = ltp - atm_strike
+        actual_diff = atm_ce_price - atm_pe_price
+        deviation = abs(actual_diff - expected_diff)
+
+        # Base value for tolerance (handle ATM case)
+        base_value = abs(ltp - atm_strike)
+        if base_value == 0:
+            base_value = (atm_ce_price + atm_pe_price) / 2
+
+        # Dynamic tolerance: deviation allowed scales with market
+        price_tolerance = 0.5 * base_value  # 50% of expected move, can tune
+        fair_price = deviation <= price_tolerance
+
 
         # ==== SIGNAL LOGIC ====
         signal = "SIDEWAYS"
@@ -219,17 +229,18 @@ def compute_signals(merged_df, atm_strike, ltp, price_tolerance=1):
             signal = "SELL"
 
         st.info(f"Ratio: {ratio:.2f} | Volume Ratio: {volume_ratio:.2f} | "
-                 f"ATM CE: {atm_ce_price:.2f} | ATM PE: {atm_pe_price:.2f} "
-                 f"| Price Diff: {price_diff:.2f} | Fair: {fair_price}")
+                f"ATM CE: {atm_ce_price:.2f} | ATM PE: {atm_pe_price:.2f} | "
+                f"Expected Diff: {expected_diff:.2f} | Actual Diff: {actual_diff:.2f} | "
+                f"Deviation: {deviation:.2f} | Tolerance: {price_tolerance:.2f} | Fair: {fair_price} ")
 
-        logging.info(f"Signal Computation: ratio={ratio:.2f}, volume_ratio={volume_ratio:.2f}, signal={signal}")
+
+        logging.info(f"Signal Computation: ratio={ratio:.2f}, volume_ratio={volume_ratio:.2f}, signal={signal} , fair_price={fair_price}")
 
         return signal, ratio, volume_ratio
 
     except Exception as e:
         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
         return "SIDEWAYS", 0, 0
-
 # Optimized strike selection
 def select_strikes_atm_half_price(chain, atm_strike):
     try:
