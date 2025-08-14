@@ -149,9 +149,11 @@ def get_symbol_ltp(cid, token, symbol):
     return resp["d"][0]["v"]["lp"]
 
 # Signal computation with improved error handling
-def compute_signals(merged_df, atm_strike, ltp): 
+def compute_signals(merged_df, atm_strike, ltp, tolerance_pct=5):
     """
-    Compute BUY/SELL/SIDEWAYS signal based on money flow, volume ratio, and ATM CE/PE fair price check.
+    Compute BUY/SELL/SIDEWAYS signal based on money flow, volume ratio,
+    and ATM CE/PE fair price check using premium % difference method.
+    Fair when CE & PE prices differ by <= tolerance_pct.
     """
     try:
         def safe_val(series, default=0):
@@ -171,7 +173,6 @@ def compute_signals(merged_df, atm_strike, ltp):
             atm_strike = min(strikes, key=lambda s: abs(s - atm_strike))
         idx_atm = strikes.index(atm_strike)
 
-        # Fill NaNs
         merged_df = merged_df.fillna(0)
 
         # Money flow
@@ -182,63 +183,52 @@ def compute_signals(merged_df, atm_strike, ltp):
         atm_row = merged_df[merged_df["Strike"] == atm_strike]
         atm_ce_price = safe_val(atm_row["CE_ltp"])
         atm_pe_price = safe_val(atm_row["PE_ltp"])
-        atm_ce_vol = safe_val(atm_row["CE_Vol"])
-        atm_pe_vol = safe_val(atm_row["PE_Vol"])
 
-        # ITM strikes
+        # ITM strikes for ratio
         ce_itm_strikes = strikes[max(0, idx_atm - 5):idx_atm]
         pe_itm_strikes = strikes[idx_atm + 1:min(len(strikes), idx_atm + 6)]
-
         ce_itm_df = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]
         pe_itm_df = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]
 
-        # Ratio and Volume ratio
         itm_ce_moneyflow = ce_itm_df["CE_moneyflow"].sum()
         itm_pe_moneyflow = pe_itm_df["PE_moneyflow"].sum()
-
         itm_ce_vol = ce_itm_df["CE_Vol"].sum()
         itm_pe_vol = pe_itm_df["PE_Vol"].sum()
 
-        numerator = itm_ce_moneyflow - itm_pe_moneyflow
-        denominator = abs(itm_ce_moneyflow) + abs(itm_pe_moneyflow)
-        ratio = numerator / denominator if denominator != 0 else 0
+        ratio = (itm_ce_moneyflow - itm_pe_moneyflow) / \
+                (abs(itm_ce_moneyflow) + abs(itm_pe_moneyflow)) \
+                if (abs(itm_ce_moneyflow) + abs(itm_pe_moneyflow)) != 0 else 0
 
-        volume_ratio = ((itm_ce_vol - itm_pe_vol) / (itm_ce_vol + itm_pe_vol)
+        volume_ratio = ((itm_ce_vol - itm_pe_vol) /
+                        (itm_ce_vol + itm_pe_vol)
                         if (itm_ce_vol + itm_pe_vol) != 0 else 0)
 
-        # ==== Dynamic Fair Price Check using Put-Call Parity ====
-        expected_diff = int(ltp) - int(atm_strike)
-        actual_diff = int(atm_ce_price) - int(atm_pe_price)
-        deviation = int(actual_diff) - int(expected_diff)
+        # ==== Fairness check ====
+        max_price = max(atm_ce_price, atm_pe_price)
+        min_price = min(atm_ce_price, atm_pe_price)
 
-        # Base value for tolerance (handle ATM case)
-        # base_value = abs(ltp - atm_strike)
-        # if base_value == 0:
-        #     base_value = (atm_ce_price + atm_pe_price) / 2
-
-        # Dynamic tolerance: deviation allowed scales with market
-        # price_tolerance = 0.5 * base_value  # 50% of expected move, can tune
-        fair_price = deviation
-
+        if max_price == 0:
+            diff_pct = 0
+            fair_bool = True
+        else:
+            diff_pct = ((max_price - min_price) / max_price) * 100
+            fair_bool = diff_pct <= tolerance_pct
 
         # ==== SIGNAL LOGIC ====
         signal = "SIDEWAYS"
         if ratio > 0 and volume_ratio > 0:
-            st.error(f'Market in BUY waiting for entry')
-            if fair_price <= 0:
+            if fair_bool:
                 signal = "BUY"
-        elif ratio < 0 and volume_ratio < 0 :
-            st.error(f'Market in SELL waiting for entry')
-            if fair_price >= 0:
+        elif ratio < 0 and volume_ratio < 0:
+            if fair_bool:
                 signal = "SELL"
 
         st.info(f"Ratio: {ratio:.2f} | Volume Ratio: {volume_ratio:.2f} | "
                 f"ATM CE: {atm_ce_price:.2f} | ATM PE: {atm_pe_price:.2f} | "
-                f"Expected Diff: {expected_diff:.2f} | Actual Diff: {actual_diff:.2f} | "
-                f"Deviation: {deviation:.2f}  | Fair: {fair_price} ")
+                f"Diff %: {diff_pct:.2f}% | Tolerance: {tolerance_pct}% | Fair: {fair_bool}")
 
-
-        logging.info(f"Signal Computation: ratio={ratio:.2f}, volume_ratio={volume_ratio:.2f}, signal={signal} , fair_price={fair_price}")
+        logging.info(f"Signal Computation: ratio={ratio:.2f}, volume_ratio={volume_ratio:.2f}, "
+                     f"signal={signal}, fair={fair_bool}")
 
         return signal, ratio, volume_ratio
 
