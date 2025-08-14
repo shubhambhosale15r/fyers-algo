@@ -207,18 +207,18 @@ def compute_signals(merged_df, atm_strike, ltp):
                         if (itm_ce_vol + itm_pe_vol) != 0 else 0)
 
         # ==== Dynamic Fair Price Check using Put-Call Parity ====
-        expected_diff = ltp - atm_strike
-        actual_diff = atm_ce_price - atm_pe_price
-        deviation = abs(actual_diff - expected_diff)
+        expected_diff = int(ltp) - int(atm_strike)
+        actual_diff = int(atm_ce_price) - int(atm_pe_price)
+        deviation = int(abs(actual_diff)) - int(abs(expected_diff))
 
         # Base value for tolerance (handle ATM case)
-        base_value = abs(ltp - atm_strike)
-        if base_value == 0:
-            base_value = (atm_ce_price + atm_pe_price) / 2
+        # base_value = abs(ltp - atm_strike)
+        # if base_value == 0:
+        #     base_value = (atm_ce_price + atm_pe_price) / 2
 
         # Dynamic tolerance: deviation allowed scales with market
-        price_tolerance = 0.5 * base_value  # 50% of expected move, can tune
-        fair_price = deviation <= price_tolerance
+        # price_tolerance = 0.5 * base_value  # 50% of expected move, can tune
+        fair_price = deviation == 0
 
 
         # ==== SIGNAL LOGIC ====
@@ -231,7 +231,7 @@ def compute_signals(merged_df, atm_strike, ltp):
         st.info(f"Ratio: {ratio:.2f} | Volume Ratio: {volume_ratio:.2f} | "
                 f"ATM CE: {atm_ce_price:.2f} | ATM PE: {atm_pe_price:.2f} | "
                 f"Expected Diff: {expected_diff:.2f} | Actual Diff: {actual_diff:.2f} | "
-                f"Deviation: {deviation:.2f} | Tolerance: {price_tolerance:.2f} | Fair: {fair_price} ")
+                f"Deviation: {deviation:.2f}  | Fair: {fair_price} ")
 
 
         logging.info(f"Signal Computation: ratio={ratio:.2f}, volume_ratio={volume_ratio:.2f}, signal={signal} , fair_price={fair_price}")
@@ -241,6 +241,7 @@ def compute_signals(merged_df, atm_strike, ltp):
     except Exception as e:
         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
         return "SIDEWAYS", 0, 0
+
 # Optimized strike selection
 def select_strikes_atm_half_price(chain, atm_strike):
     try:
