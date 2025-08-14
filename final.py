@@ -227,6 +227,10 @@ def compute_signals(merged_df, atm_strike, ltp):
             signal = "BUY"
         elif ratio < 0 and volume_ratio < 0 and fair_price:
             signal = "SELL"
+        elif ratio > 0 and volume_ratio > 0 and fair_price == False:
+            st.warning(f"Market in BUY waiting for entry")
+        elif ratio < 0 and volume_ratio < 0 and fair_price == False:
+            st.warning(f"Market in SELL waiting for entry")
 
         st.info(f"Ratio: {ratio:.2f} | Volume Ratio: {volume_ratio:.2f} | "
                 f"ATM CE: {atm_ce_price:.2f} | ATM PE: {atm_pe_price:.2f} | "
@@ -821,7 +825,35 @@ def show_signal_history():
     )
 
     st.dataframe(formatted_df)
-    st.line_chart(formatted_df.set_index("timestamp")[["ratio", "volume_ratio","underlying_ltp"]], use_container_width=True)
+    # Assuming formatted_df is your DataFrame
+    df = formatted_df.copy()
+
+    # Convert timestamp to datetime
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+    # Remove currency symbol and convert underlying_ltp to float
+    df['underlying_ltp'] = df['underlying_ltp'].replace('[₹,]', '', regex=True).astype(float)
+
+    # Ensure numeric columns are float
+    df['ratio'] = pd.to_numeric(df['ratio'], errors='coerce')
+    df['volume_ratio'] = pd.to_numeric(df['volume_ratio'], errors='coerce')
+
+    # Drop rows with missing values in key columns
+    df = df.dropna(subset=['timestamp', 'ratio', 'volume_ratio', 'underlying_ltp'])
+
+    # Plot
+    st.line_chart(
+        df.set_index('timestamp')[['underlying_ltp']],
+        use_container_width=True
+    )
+    st.line_chart(
+        df.set_index('timestamp')[['ratio']],
+        use_container_width=True
+    )
+    st.line_chart(
+        df.set_index('timestamp')[['volume_ratio']],
+        use_container_width=True
+    )
 
     csv = history_df.to_csv(index=False)
     st.download_button(
