@@ -223,14 +223,14 @@ def compute_signals(merged_df, atm_strike, ltp):
 
         # ==== SIGNAL LOGIC ====
         signal = "SIDEWAYS"
-        if ratio > 0 and volume_ratio > 0 and fair_price <= 0:
-            signal = "BUY"
-        elif ratio < 0 and volume_ratio < 0 and fair_price >= 0:
-            signal = "SELL"
-        elif ratio > 0 and volume_ratio > 0 and fair_price == False:
-            st.warning(f"Market in BUY waiting for entry")
-        elif ratio < 0 and volume_ratio < 0 and fair_price == False:
-            st.warning(f"Market in SELL waiting for entry")
+        if ratio > 0 and volume_ratio > 0:
+            st.error(f'Market in BUY waiting for entry')
+            if fair_price <= 0:
+                signal = "BUY"
+        elif ratio < 0 and volume_ratio < 0 :
+            st.error(f'Market in SELL waiting for entry')
+            if fair_price >= 0:
+                signal = "SELL"
 
         st.info(f"Ratio: {ratio:.2f} | Volume Ratio: {volume_ratio:.2f} | "
                 f"ATM CE: {atm_ce_price:.2f} | ATM PE: {atm_pe_price:.2f} | "
