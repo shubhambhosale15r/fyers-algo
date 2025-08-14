@@ -149,7 +149,7 @@ def get_symbol_ltp(cid, token, symbol):
     return resp["d"][0]["v"]["lp"]
 
 # Signal computation with improved error handling
-def compute_signals(merged_df, atm_strike, ltp, tolerance_pct=5):
+def compute_signals(merged_df, atm_strike, ltp, tolerance_pct=1):
     """
     Compute BUY/SELL/SIDEWAYS signal based on money flow, volume ratio,
     and ATM CE/PE fair price check using premium % difference method.
@@ -219,13 +219,13 @@ def compute_signals(merged_df, atm_strike, ltp, tolerance_pct=5):
         if ratio > 0.33 and volume_ratio > 0.33:
             if fair_bool:
                 signal = "BUY"
-        elif ratio < 0.33 and volume_ratio < 0.33:
+        elif ratio < -0.33 and volume_ratio < -0.33:
             if fair_bool:
                 signal = "SELL"
 
         st.info(f"Ratio: {ratio:.2f} | Volume Ratio: {volume_ratio:.2f} | "
                 f"ATM CE: {atm_ce_price:.2f} | ATM PE: {atm_pe_price:.2f} | "
-                f"Diff %: {diff_pct:.2f}% | Tolerance: {tolerance_pct}% | Fair: {fair_bool}")
+                f"Current Diff %: {diff_pct:.2f}% | Tolerance: {tolerance_pct}% | Fair: {fair_bool}")
 
         logging.info(f"Signal Computation: ratio={ratio:.2f}, volume_ratio={volume_ratio:.2f}, "
                      f"signal={signal}, fair={fair_bool}")
@@ -235,6 +235,7 @@ def compute_signals(merged_df, atm_strike, ltp, tolerance_pct=5):
     except Exception as e:
         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
         return "SIDEWAYS", 0, 0
+
 
 # Optimized strike selection
 def select_strikes_atm_half_price(chain, atm_strike):
@@ -256,7 +257,7 @@ def select_strikes_atm_half_price(chain, atm_strike):
         # Find half-price strikes with vectorized operations
         buy_pe_row = None
         if sell_pe_row and "ltp" in sell_pe_row and sell_pe_row["ltp"] > 0:
-            target = sell_pe_row["ltp"] / 4
+            target = sell_pe_row["ltp"] / 2
             pe_candidates = pe[pe["strike_price"] != atm_strike].copy()
             pe_candidates["ltp_diff"] = (pe_candidates["ltp"] - target).abs()
             if not pe_candidates.empty:
@@ -264,7 +265,7 @@ def select_strikes_atm_half_price(chain, atm_strike):
 
         buy_ce_row = None
         if sell_ce_row and "ltp" in sell_ce_row and sell_ce_row["ltp"] > 0:
-            target = sell_ce_row["ltp"] / 4
+            target = sell_ce_row["ltp"] / 2
             ce_candidates = ce[ce["strike_price"] != atm_strike].copy()
             ce_candidates["ltp_diff"] = (ce_candidates["ltp"] - target).abs()
             if not ce_candidates.empty:
