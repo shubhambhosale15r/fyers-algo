@@ -209,7 +209,7 @@ def compute_signals(merged_df, atm_strike, ltp):
         # ==== Dynamic Fair Price Check using Put-Call Parity ====
         expected_diff = int(ltp) - int(atm_strike)
         actual_diff = int(atm_ce_price) - int(atm_pe_price)
-        deviation = int(abs(actual_diff)) - int(abs(expected_diff))
+        deviation = int(actual_diff) - int(expected_diff)
 
         # Base value for tolerance (handle ATM case)
         # base_value = abs(ltp - atm_strike)
