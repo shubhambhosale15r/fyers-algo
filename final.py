@@ -218,14 +218,14 @@ def compute_signals(merged_df, atm_strike, ltp):
 
         # Dynamic tolerance: deviation allowed scales with market
         # price_tolerance = 0.5 * base_value  # 50% of expected move, can tune
-        fair_price = deviation == 0
+        fair_price = deviation
 
 
         # ==== SIGNAL LOGIC ====
         signal = "SIDEWAYS"
-        if ratio > 0 and volume_ratio > 0 and fair_price:
+        if ratio > 0 and volume_ratio > 0 and fair_price <= 0:
             signal = "BUY"
-        elif ratio < 0 and volume_ratio < 0 and fair_price:
+        elif ratio < 0 and volume_ratio < 0 and fair_price >= 0:
             signal = "SELL"
         elif ratio > 0 and volume_ratio > 0 and fair_price == False:
             st.warning(f"Market in BUY waiting for entry")
