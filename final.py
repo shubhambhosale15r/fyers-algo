@@ -240,7 +240,7 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
                 signal = "BUY"
                 
         elif ce_net < 0 and pe_net > 0:  # Valid bearish
-             st.warning(f"Market in SELL")
+            st.warning(f"Market in SELL")
             ratio = (ce_net - pe_net) / (abs(ce_net) + abs(pe_net))
             if ratio < -ratio_threshold and volume_ratio < -volume_ratio_threshold and fair_bool:
                 signal = "SELL"
