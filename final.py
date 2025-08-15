@@ -149,93 +149,146 @@ def get_symbol_ltp(cid, token, symbol):
     return resp["d"][0]["v"]["lp"]
 
 # Signal computation with improved error handling
-def compute_signals(merged_df, atm_strike, ltp, tolerance_pct=1):
+def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1, 
+                   volume_ratio_threshold=0.33, ratio_threshold=0.33):
     """
-    Compute BUY/SELL/SIDEWAYS signal based on money flow, volume ratio,
-    and ATM CE/PE fair price check using premium % difference method.
-    Fair when CE & PE prices differ by <= tolerance_pct.
+    Compute trading signals with enhanced logic that:
+    - Uses ATM+CE range or falls back to percentage range
+    - Implements robust money flow analysis
+    - Handles edge cases properly
     """
     try:
         def safe_val(series, default=0):
-            if series.empty:
-                return default
-            val = series.iloc[0]
-            return default if pd.isna(val) else val
+            """Safe value extraction from series"""
+            return series.iloc[0] if not series.empty and not pd.isna(series.iloc[0]) else default
 
-        # Ensure valid strikes
-        strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
-        if not strikes:
-            logging.error("No valid strikes in data")
-            return "SIDEWAYS", 0
-
-        # Adjust ATM strike if needed
-        if atm_strike not in strikes:
-            atm_strike = min(strikes, key=lambda s: abs(s - atm_strike))
-        idx_atm = strikes.index(atm_strike)
-
-        merged_df = merged_df.fillna(0)
-
-        # Money flow
-        merged_df["CE_moneyflow"] = merged_df["CE_ltp"] * merged_df["CE_Vol"]
-        merged_df["PE_moneyflow"] = merged_df["PE_ltp"] * merged_df["PE_Vol"]
-
-        # ATM values
+        # 1. Get ATM option prices and calculate ranges
         atm_row = merged_df[merged_df["Strike"] == atm_strike]
         atm_ce_price = safe_val(atm_row["CE_ltp"])
         atm_pe_price = safe_val(atm_row["PE_ltp"])
-
-        # ITM strikes for ratio
-        ce_itm_strikes = strikes[max(0, idx_atm - 5):idx_atm]
-        pe_itm_strikes = strikes[idx_atm + 1:min(len(strikes), idx_atm + 6)]
-        ce_itm_df = merged_df[merged_df["Strike"].isin(ce_itm_strikes)]
-        pe_itm_df = merged_df[merged_df["Strike"].isin(pe_itm_strikes)]
-
-        itm_ce_moneyflow = ce_itm_df["CE_moneyflow"].sum()
-        itm_pe_moneyflow = pe_itm_df["PE_moneyflow"].sum()
-        itm_ce_vol = ce_itm_df["CE_Vol"].sum()
-        itm_pe_vol = pe_itm_df["PE_Vol"].sum()
-
-        ratio = (itm_ce_moneyflow - itm_pe_moneyflow) / \
-                (abs(itm_ce_moneyflow) + abs(itm_pe_moneyflow)) \
-                if (abs(itm_ce_moneyflow) + abs(itm_pe_moneyflow)) != 0 else 0
-
-        volume_ratio = ((itm_ce_vol - itm_pe_vol) /
-                        (itm_ce_vol + itm_pe_vol)
-                        if (itm_ce_vol + itm_pe_vol) != 0 else 0)
-
-        # ==== Fairness check ====
-        max_price = max(atm_ce_price, atm_pe_price)
-        min_price = min(atm_ce_price, atm_pe_price)
-
-        if max_price == 0:
-            diff_pct = 0
-            fair_bool = True
+        price_range = atm_ce_price + atm_pe_price
+        
+        # 2. Calculate minimum required range in absolute terms
+        min_range_abs = ltp * (min_range_pct / 100)
+        
+        # 3. Determine range bounds
+        if price_range >= min_range_abs:
+            # Use ATM+CE range if sufficiently large
+            lower_bound = atm_strike - price_range
+            upper_bound = atm_strike + price_range
+            range_type = f"ATM+CE Range (±{price_range:.2f} points)"
         else:
-            diff_pct = ((max_price - min_price) / max_price) * 100
-            fair_bool = diff_pct <= tolerance_pct
+            # Fall back to percentage range
+            lower_bound = ltp * (1 - min_range_pct/100)
+            upper_bound = ltp * (1 + min_range_pct/100)
+            range_type = f"{min_range_pct}% Underlying Range"
 
-        # ==== SIGNAL LOGIC ====
+        # 4. Get strikes in selected range
+        strikes = sorted(merged_df["Strike"].dropna().unique())
+        range_strikes = [s for s in strikes if lower_bound <= s <= upper_bound]
+        
+        if not range_strikes:
+            logging.warning(f"No strikes in {range_type} ({lower_bound:.2f}-{upper_bound:.2f})")
+            return "SIDEWAYS", 0, 0
+
+        # 5. Prepare data calculations
+        merged_df = merged_df.fillna(0)
+        merged_df["CE_moneyflow"] = merged_df["CE_ltp"] * merged_df["CE_Vol"]
+        merged_df["PE_moneyflow"] = merged_df["PE_ltp"] * merged_df["PE_Vol"]
+        range_df = merged_df[merged_df["Strike"].isin(range_strikes)]
+        
+        # 6. Classify strikes into ITM/OTM zones
+        atm_idx = range_strikes.index(atm_strike) if atm_strike in range_strikes else len(range_strikes)//2
+        
+        # CE zones
+        itm_ce_strikes = range_strikes[:atm_idx]  # Lower strikes = ITM CE
+        otm_ce_strikes = range_strikes[atm_idx+1:]  # Higher strikes = OTM CE
+        
+        # PE zones (opposite logic)
+        itm_pe_strikes = range_strikes[atm_idx+1:]  # Higher strikes = ITM PE
+        otm_pe_strikes = range_strikes[:atm_idx]  # Lower strikes = OTM PE
+
+        # 7. Calculate net money flows
+        ce_net = (range_df[range_df["Strike"].isin(itm_ce_strikes)]["CE_moneyflow"].sum() - 
+                 range_df[range_df["Strike"].isin(otm_ce_strikes)]["CE_moneyflow"].sum())
+        
+        pe_net = (range_df[range_df["Strike"].isin(itm_pe_strikes)]["PE_moneyflow"].sum() - 
+                 range_df[range_df["Strike"].isin(otm_pe_strikes)]["PE_moneyflow"].sum())
+
+        
+        # Total CE volume across ALL strikes in range
+        ce_vol = range_df["CE_Vol"].sum()  
+
+        # Total PE volume across ALL strikes in range 
+        pe_vol = range_df["PE_Vol"].sum()
+
+        # Standard put-call volume ratio
+        volume_ratio = (ce_vol - pe_vol) / (ce_vol + pe_vol)
+
+        # 9. Fairness check
+        diff_pct = abs(atm_ce_price - atm_pe_price) / max(atm_ce_price, atm_pe_price) * 100
+        fair_bool = diff_pct <= tolerance_pct
+
+        # 10. Enhanced signal generation
         signal = "SIDEWAYS"
-        if ratio > 0.33 and volume_ratio > 0.33:
-            if fair_bool:
+        ratio = 0
+
+        if ce_net > 0 and pe_net < 0:  # Valid bullish
+            ratio = (ce_net - pe_net) / (abs(ce_net) + abs(pe_net))
+            if ratio > ratio_threshold and volume_ratio > volume_ratio_threshold and fair_bool:
                 signal = "BUY"
-        elif ratio < -0.33 and volume_ratio < -0.33:
-            if fair_bool:
+                
+        elif ce_net < 0 and pe_net > 0:  # Valid bearish
+            ratio = (ce_net - pe_net) / (abs(ce_net) + abs(pe_net))
+            if ratio < -ratio_threshold and volume_ratio < -volume_ratio_threshold and fair_bool:
                 signal = "SELL"
 
-        st.info(f"Ratio: {ratio:.2f} | Volume Ratio: {volume_ratio:.2f} | "
-                f"ATM CE: {atm_ce_price:.2f} | ATM PE: {atm_pe_price:.2f} | "
-                f"Current Diff %: {diff_pct:.2f}% | Tolerance: {tolerance_pct}% | Fair: {fair_bool}")
+        # Explicit handling for market-wide moves
+        elif ce_net < 0 and pe_net < 0:
+            if ce_net < pe_net:
+                if abs(abs(ce_net) - abs(pe_net)) / (abs(ce_net) + abs(pe_net)) > 0.33:
+                    # st.write(f"{abs(abs(ce_net) - abs(pe_net)) / (abs(ce_net) + abs(pe_net))}")
+                    st.info("Sideways to Mild Bearish")
+                
+            elif pe_net < ce_net:
+                if abs(abs(ce_net) - abs(pe_net)) / (abs(ce_net) + abs(pe_net)) > 0.33:
+                    # st.write(f"{abs(abs(ce_net) - abs(pe_net)) / (abs(ce_net) + abs(pe_net))}")
+                    st.info("Sideways to Mild Bullish")
+                
+            st.warning("Market-wide position unwinding - Sideways (no strong trend)")
+        elif ce_net > 0 and pe_net > 0:
+            if ce_net > pe_net:
+                if abs(abs(ce_net) - abs(pe_net)) / (abs(ce_net) + abs(pe_net)) > 0.33:
+                    # st.write(f"{abs(abs(ce_net) - abs(pe_net)) / (abs(ce_net) + abs(pe_net))}")
+                    st.info("Might Become Bullish")
+                
+            elif pe_net > ce_net:
+                if abs(abs(ce_net) - abs(pe_net)) / (abs(ce_net) + abs(pe_net)) > 0.33:
+                    # st.write(f"{abs(abs(ce_net) - abs(pe_net)) / (abs(ce_net) + abs(pe_net))}")
+                    st.info("Might Become Bearish")
+                 
+            st.warning("Market-wide position building - Could go either way")
 
-        logging.info(f"Signal Computation: ratio={ratio:.2f}, volume_ratio={volume_ratio:.2f}, "
-                     f"signal={signal}, fair={fair_bool}")
+        # 11. Diagnostic output
+        st.markdown(f"""
+        **{range_type}**  
+        **Range:** {lower_bound:.2f} to {upper_bound:.2f}  
+        **CE Net Flow (ITM-OTM):** {ce_net:,.0f}  
+        **PE Net Flow (ITM-OTM):** {pe_net:,.0f}  
+        **Ratio:** {ratio:.2f}  
+        **Volume Ratio:** {volume_ratio:.2f}  
+        **ATM Prices:** CE={atm_ce_price:.2f} | PE={atm_pe_price:.2f}  
+        **ATM Diff:** {diff_pct:.2f}%  
+        **Fair:** {fair_bool}  
+        **Signal:** {signal}
+        """, unsafe_allow_html=True)
 
         return signal, ratio, volume_ratio
 
     except Exception as e:
         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
+        st.error("⚠️ Error in signal computation - check logs")
         return "SIDEWAYS", 0, 0
-
 
 # Optimized strike selection
 def select_strikes_atm_half_price(chain, atm_strike):
