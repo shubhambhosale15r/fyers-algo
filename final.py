@@ -270,18 +270,18 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
             st.warning("Market-wide position building - Could go either way")
 
         # 11. Diagnostic output
-        st.markdown(f"""
-        **{range_type}**  
-        **Range:** {lower_bound:.2f} to {upper_bound:.2f}  
-        **CE Net Flow (ITM-OTM):** {ce_net:,.0f}  
-        **PE Net Flow (ITM-OTM):** {pe_net:,.0f}  
-        **Ratio:** {ratio:.2f}  
-        **Volume Ratio:** {volume_ratio:.2f}  
-        **ATM Prices:** CE={atm_ce_price:.2f} | PE={atm_pe_price:.2f}  
-        **ATM Diff:** {diff_pct:.2f}%  
-        **Fair:** {fair_bool}  
-        **Signal:** {signal}
-        """, unsafe_allow_html=True)
+        # st.markdown(f"""
+        # **{range_type}**  
+        # **Range:** {lower_bound:.2f} to {upper_bound:.2f}  
+        # **CE Net Flow (ITM-OTM):** {ce_net:,.0f}  
+        # **PE Net Flow (ITM-OTM):** {pe_net:,.0f}  
+        # **Ratio:** {ratio:.2f}  
+        # **Volume Ratio:** {volume_ratio:.2f}  
+        # **ATM Prices:** CE={atm_ce_price:.2f} | PE={atm_pe_price:.2f}  
+        # **ATM Diff:** {diff_pct:.2f}%  
+        # **Fair:** {fair_bool}  
+        # **Signal:** {signal}
+        # """, unsafe_allow_html=True)
 
         return signal, ratio, volume_ratio
 
