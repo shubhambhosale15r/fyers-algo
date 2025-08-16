@@ -10,8 +10,8 @@ import uuid
 from streamlit_autorefresh import st_autorefresh
 from functools import lru_cache
 import os
-
-
+import plotly.express as px
+import subprocess
 
 #setting wide mode as default
 st.set_page_config(
@@ -22,7 +22,7 @@ st.set_page_config(
 )
 # Constants
 class Config:
-    REFRESH_INTERVAL = 10  # seconds
+    REFRESH_INTERVAL = 30  # seconds
     API_RATE_LIMIT = 200
     API_WINDOW = 60  # seconds
     LOT_SIZE = 75 
@@ -150,14 +150,13 @@ def get_symbol_ltp(cid, token, symbol):
 
 # Signal computation with improved error handling
 def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1, 
-                   volume_ratio_threshold=0.33, ratio_threshold=0.33):
+                   volume_ratio_threshold=0.33, ratio_threshold=0.33, fyers_api=None):
     """
-    Compute trading signals with enhanced logic that:
-    - Uses ATM+CE range or falls back to percentage range
-    - Implements robust money flow analysis
-    - Handles edge cases properly
+    Compute trading signals with Fyers API integration for real-time strike analysis
+    Returns: (signal, ratio, volume_ratio) - maintaining original signature
     """
     try:
+
         def safe_val(series, default=0):
             """Safe value extraction from series"""
             return series.iloc[0] if not series.empty and not pd.isna(series.iloc[0]) else default
@@ -168,17 +167,15 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
         atm_pe_price = safe_val(atm_row["PE_ltp"])
         price_range = atm_ce_price + atm_pe_price
         
-        # 2. Calculate minimum required range in absolute terms
+        # 2. Calculate minimum required range
         min_range_abs = ltp * (min_range_pct / 100)
         
         # 3. Determine range bounds
         if price_range >= min_range_abs:
-            # Use ATM+CE range if sufficiently large
             lower_bound = atm_strike - price_range
             upper_bound = atm_strike + price_range
             range_type = f"ATM+CE Range (±{price_range:.2f} points)"
         else:
-            # Fall back to percentage range
             lower_bound = ltp * (1 - min_range_pct/100)
             upper_bound = ltp * (1 + min_range_pct/100)
             range_type = f"{min_range_pct}% Underlying Range"
@@ -188,88 +185,166 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
         range_strikes = [s for s in strikes if lower_bound <= s <= upper_bound]
         
         if not range_strikes:
-            logging.warning(f"No strikes in {range_type} ({lower_bound:.2f}-{upper_bound:.2f})")
+            logging.warning(f"No strikes in range {lower_bound:.2f}-{upper_bound:.2f}")
             return "SIDEWAYS", 0, 0
 
         # 5. Prepare data calculations
         merged_df = merged_df.fillna(0)
         merged_df["CE_moneyflow"] = merged_df["CE_ltp"] * merged_df["CE_Vol"]
         merged_df["PE_moneyflow"] = merged_df["PE_ltp"] * merged_df["PE_Vol"]
-        range_df = merged_df[merged_df["Strike"].isin(range_strikes)]
+        range_df = merged_df[merged_df["Strike"].isin(range_strikes)].copy()
         
-        # 6. Classify strikes into ITM/OTM zones
+        # 6. Fyers Quotes Analysis (New Addition)
+        if fyers_api and 'CE_symbol' in range_df.columns and 'PE_symbol' in range_df.columns:
+            try:
+                # Get all unique option symbols
+                symbols = list(set(
+                    range_df['CE_symbol'].tolist() + 
+                    range_df['PE_symbol'].tolist()
+                ))
+                symbols = [s for s in symbols if s != 0 and isinstance(s, str)]
+                
+                if symbols:
+                    # Fetch quotes in batches if many symbols
+                    quotes = {}
+                    for i in range(0, len(symbols), 50):  # FYERS allows 50 symbols per request
+                        batch = symbols[i:i+50]
+                        response = fyers_api.quotes({"symbols": ",".join(batch)})
+                        if response.get('code') == 200:
+                            quotes.update({
+                                item['n']: item['v'] 
+                                for item in response['d'] 
+                                if item['s'] == 'ok'
+                            })
+                    
+                    # Analyze price vs open for each strike
+                    for idx, row in range_df.iterrows():
+                        strike = row['Strike']
+                        
+                        # CE Analysis
+                        if row['CE_symbol'] in quotes:
+                            ce_data = quotes[row['CE_symbol']]
+                            ce_open = ce_data.get('open_price', 0)
+                            ce_ltp = ce_data.get('lp', 0)
+                            range_df.at[idx, 'CE_vs_open'] = 'ABOVE' if ce_ltp > ce_open else 'BELOW'
+                        
+                        # PE Analysis
+                        if row['PE_symbol'] in quotes:
+                            pe_data = quotes[row['PE_symbol']]
+                            pe_open = pe_data.get('open_price', 0)
+                            pe_ltp = pe_data.get('lp', 0)
+                            range_df.at[idx, 'PE_vs_open'] = 'ABOVE' if pe_ltp > pe_open else 'BELOW'
+            except Exception as e:
+                logging.warning(f"Fyers quotes error: {str(e)}")
+
+        # 7. Classify strikes into ITM/OTM zones
         atm_idx = range_strikes.index(atm_strike) if atm_strike in range_strikes else len(range_strikes)//2
         
-        # CE zones
-        itm_ce_strikes = range_strikes[:atm_idx]  # Lower strikes = ITM CE
-        otm_ce_strikes = range_strikes[atm_idx+1:]  # Higher strikes = OTM CE
-        
-        # PE zones (opposite logic)
-        itm_pe_strikes = range_strikes[atm_idx+1:]  # Higher strikes = ITM PE
-        otm_pe_strikes = range_strikes[:atm_idx]  # Lower strikes = OTM PE
+        itm_ce_strikes = range_strikes[:atm_idx]
+        otm_ce_strikes = range_strikes[atm_idx+1:]
+        itm_pe_strikes = range_strikes[atm_idx+1:]
+        otm_pe_strikes = range_strikes[:atm_idx]
 
-        # 7. Calculate net money flows
-        ce_net = (range_df[range_df["Strike"].isin(itm_ce_strikes)]["CE_moneyflow"].sum() - 
-                 range_df[range_df["Strike"].isin(otm_ce_strikes)]["CE_moneyflow"].sum())
-        
-        pe_net = (range_df[range_df["Strike"].isin(itm_pe_strikes)]["PE_moneyflow"].sum() - 
-                 range_df[range_df["Strike"].isin(otm_pe_strikes)]["PE_moneyflow"].sum())
+        # 8. Calculate net money flows with strike analysis enhancement
+        ce_net = pe_net = 0
+        ce_above_open = pe_above_open = 0
 
+        for strike in range_strikes:
+            strike_data = range_df[range_df["Strike"] == strike]
+            if not strike_data.empty:
+                # Money flow calculations (unchanged)
+                if strike in itm_ce_strikes:
+                    ce_net += safe_val(strike_data["CE_moneyflow"])
+                elif strike in otm_ce_strikes:
+                    ce_net -= safe_val(strike_data["CE_moneyflow"])
+                    
+                if strike in itm_pe_strikes:
+                    pe_net += safe_val(strike_data["PE_moneyflow"])
+                elif strike in otm_pe_strikes:
+                    pe_net -= safe_val(strike_data["PE_moneyflow"])
+                
+                # Fixed open price comparison
+                if 'CE_vs_open' in strike_data.columns:
+                    st.session_state["quote_api_count"] += 1
+                    ce_status = strike_data['CE_vs_open'].iloc[0] if not strike_data['CE_vs_open'].empty else None
+                    if ce_status == 'ABOVE':
+                        ce_above_open += 1
+                        # st.write(f"CE ABOVE OPEN at strike {strike}")  # Debug output
+                        
+                if 'PE_vs_open' in strike_data.columns:
+                    st.session_state["quote_api_count"] += 1
+                    pe_status = strike_data['PE_vs_open'].iloc[0] if not strike_data['PE_vs_open'].empty else None
+                    if pe_status == 'ABOVE':
+                        pe_above_open += 1
+                        # st.write(f"PE ABOVE OPEN at strike {strike}")  # Debug output
         
-        # Total CE volume across ALL strikes in range
-        ce_vol = range_df["CE_Vol"].sum()  
+        # st.write(f"Final counts - CE Above: {ce_above_open}, PE Above: {pe_above_open}")
+        # st.write(ce_above_open)
+        # st.write(pe_above_open)
+        # st.write(range_df)
 
-        # Total PE volume across ALL strikes in range 
+        # 9. Volume calculations
+        ce_vol = range_df["CE_Vol"].sum()
         pe_vol = range_df["PE_Vol"].sum()
+        volume_ratio = (ce_vol - pe_vol) / (ce_vol + pe_vol) if (ce_vol + pe_vol) > 0 else 0
 
-        # Standard put-call volume ratio
-        volume_ratio = (ce_vol - pe_vol) / (ce_vol + pe_vol)
-
-        # 9. Fairness check
+        # 10. Fairness check
         diff_pct = abs(atm_ce_price - atm_pe_price) / max(atm_ce_price, atm_pe_price) * 100
         fair_bool = diff_pct <= tolerance_pct
 
-        # 10. Enhanced signal generation
+        # 11. Enhanced signal generation with strike confirmation
         signal = "SIDEWAYS"
         ratio = 0
 
-        if ce_net > 0 and pe_net < 0:  # Valid bullish
+        # Bullish Case
+        if ce_net > 0 and pe_net < 0:
             ratio = (ce_net - pe_net) / (abs(ce_net) + abs(pe_net))
-            if ratio > ratio_threshold and volume_ratio > volume_ratio_threshold and fair_bool:
-                signal = "BUY"
-                
-        elif ce_net < 0 and pe_net > 0:  # Valid bearish
+            if (ratio > ratio_threshold and 
+                volume_ratio > volume_ratio_threshold and 
+                fair_bool):
+                # Additional confirmation from strike analysis
+                if hasattr(range_df, 'CE_vs_open'):  # If we have quotes data
+                    if ce_above_open > len(range_strikes) * 0.6:  # >60% CEs above open
+                        st.write("60% call above open ")
+                        signal = "BUY"
+                else:
+                    signal = "BUY"
+        
+        # Bearish Case
+        elif ce_net < 0 and pe_net > 0:
             ratio = (ce_net - pe_net) / (abs(ce_net) + abs(pe_net))
-            if ratio < -ratio_threshold and volume_ratio < -volume_ratio_threshold and fair_bool:
-                signal = "SELL"
+            if (ratio < -ratio_threshold and 
+                volume_ratio < -volume_ratio_threshold and 
+                fair_bool):
+                # Additional confirmation from strike analysis
+                if hasattr(range_df, 'PE_vs_open'):  # If we have quotes data
+                    if pe_above_open > len(range_strikes) * 0.6:  # >60% PEs above open
+                        st.write("60% put above open ")
+                        signal = "SELL"
+                else:
+                    signal = "SELL"
 
         # Explicit handling for market-wide moves
         elif ce_net < 0 and pe_net < 0:
             if ce_net < pe_net:
-                if abs(abs(ce_net) - abs(pe_net)) / (abs(ce_net) + abs(pe_net)) > 0.33:
-                    # st.write(f"{abs(abs(ce_net) - abs(pe_net)) / (abs(ce_net) + abs(pe_net))}")
+                if pe_above_open > len(range_strikes) * 0.6: 
                     st.info("Sideways to Mild Bearish")
                 
             elif pe_net < ce_net:
-                if abs(abs(ce_net) - abs(pe_net)) / (abs(ce_net) + abs(pe_net)) > 0.33:
-                    # st.write(f"{abs(abs(ce_net) - abs(pe_net)) / (abs(ce_net) + abs(pe_net))}")
+                if ce_above_open > len(range_strikes) * 0.6:
                     st.info("Sideways to Mild Bullish")
                 
             st.warning("Market-wide position unwinding - Sideways (no strong trend)")
         elif ce_net > 0 and pe_net > 0:
             if ce_net > pe_net:
-                if abs(abs(ce_net) - abs(pe_net)) / (abs(ce_net) + abs(pe_net)) > 0.33:
-                    # st.write(f"{abs(abs(ce_net) - abs(pe_net)) / (abs(ce_net) + abs(pe_net))}")
+                if ce_above_open > len(range_strikes) * 0.6:
                     st.info("Might Become Bullish")
                 
             elif pe_net > ce_net:
-                if abs(abs(ce_net) - abs(pe_net)) / (abs(ce_net) + abs(pe_net)) > 0.33:
-                    # st.write(f"{abs(abs(ce_net) - abs(pe_net)) / (abs(ce_net) + abs(pe_net))}")
+                if pe_above_open > len(range_strikes) * 0.6: 
                     st.info("Might Become Bearish")
                  
             st.warning("Market-wide position building - Could go either way")
-
-        # 11. Diagnostic output
         st.markdown(f"""
         **{range_type}**  
         **Range:** {lower_bound:.2f} to {upper_bound:.2f}  
@@ -287,117 +362,7 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
 
     except Exception as e:
         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
-        st.error("⚠️ Error in signal computation - check logs")
         return "SIDEWAYS", 0, 0
-# def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1,volume_ratio_threshold=0.33,ratio_threshold=0.33):
-#     try:
-#         def safe_val(series, default=0):
-#             """Safe value extraction from series"""
-#             return series.iloc[0] if not series.empty and not pd.isna(series.iloc[0]) else default
-
-#         # 1. Get ATM option prices
-#         atm_row = merged_df[merged_df["Strike"] == atm_strike]
-#         atm_ce_price = safe_val(atm_row["CE_ltp"])
-#         atm_pe_price = safe_val(atm_row["PE_ltp"])
-#         price_range = atm_ce_price + atm_pe_price
-        
-#         # 2. Calculate minimum required range in absolute terms
-#         min_range_abs = ltp * (min_range_pct / 100)
-        
-#         # 3. Determine range bounds
-#         if price_range >= min_range_abs:
-#             # Use ATM+CE range if sufficiently large
-#             lower_bound = atm_strike - price_range
-#             upper_bound = atm_strike + price_range
-#             range_type = f"ATM+CE Range (±{price_range:.2f} points)"
-#         else:
-#             # Fall back to percentage range
-#             lower_bound = ltp * (1 - min_range_pct/100)
-#             upper_bound = ltp * (1 + min_range_pct/100)
-#             range_type = f"{min_range_pct}% Underlying Range"
-
-#         # 4. Get strikes in selected range
-#         strikes = sorted(merged_df["Strike"].dropna().unique())
-#         range_strikes = [s for s in strikes if lower_bound <= s <= upper_bound]
-        
-#         if not range_strikes:
-#             logging.warning(f"No strikes in {range_type} ({lower_bound:.2f}-{upper_bound:.2f})")
-#             return "SIDEWAYS", 0, 0
-
-#         # 5. Prepare data calculations
-#         merged_df = merged_df.fillna(0)
-#         merged_df["CE_moneyflow"] = merged_df["CE_ltp"] * merged_df["CE_Vol"]
-#         merged_df["PE_moneyflow"] = merged_df["PE_ltp"] * merged_df["PE_Vol"]
-#         range_df = merged_df[merged_df["Strike"].isin(range_strikes)]
-        
-        
-#         # 6. Classify strikes into ITM/OTM zones
-#         atm_idx = range_strikes.index(atm_strike) if atm_strike in range_strikes else len(range_strikes)//2
-        
-#         # CE zones
-#         itm_ce_strikes = range_strikes[:atm_idx]  # Lower strikes = ITM CE
-#         otm_ce_strikes = range_strikes[atm_idx+1:]  # Higher strikes = OTM CE
-        
-#         # PE zones (opposite logic)
-#         itm_pe_strikes = range_strikes[atm_idx+1:]  # Higher strikes = ITM PE
-#         otm_pe_strikes = range_strikes[:atm_idx]  # Lower strikes = OTM PE
-
-#         # 7. Calculate net money flows
-#         ce_net = (range_df[range_df["Strike"].isin(itm_ce_strikes)]["CE_moneyflow"].sum() - 
-#                  range_df[range_df["Strike"].isin(otm_ce_strikes)]["CE_moneyflow"].sum())
-        
-#         pe_net = (range_df[range_df["Strike"].isin(itm_pe_strikes)]["PE_moneyflow"].sum() - 
-#                  range_df[range_df["Strike"].isin(otm_pe_strikes)]["PE_moneyflow"].sum())
-
-       
-#         # Volume ratio (of all the range strikes)
-#         ce_vol = range_df["CE_Vol"].sum()  # Total CE volume in range
-#         pe_vol = range_df["PE_Vol"].sum()  # Total PE volume in range
-#         volume_ratio = (ce_vol - pe_vol) / (ce_vol + pe_vol) if (ce_vol + pe_vol) > 0 else 0
-
-#         # 10. Fairness check
-#         diff_pct = abs(atm_ce_price - atm_pe_price) / max(atm_ce_price, atm_pe_price) * 100 if max(atm_ce_price, atm_pe_price) != 0 else 0
-#         fair_bool = diff_pct <= tolerance_pct
-
-#         # 11. Generate signals
-#         signal = "SIDEWAYS"
-#         if (ce_net > 0 and pe_net > 0) and volume_ratio > volume_ratio_threshold:
-#             ratio = 0
-#             signal = "BUY"
-#             if (ce_net > 0 and pe_net < 0) :
-#                 ratio = (ce_net - pe_net) / (abs(ce_net) + abs(pe_net)) if (abs(ce_net) + abs(pe_net)) != 0 else 0
-#                 if ratio > ratio_threshold and volume_ratio > volume_ratio_threshold and fair_bool:
-#                     signal = "BUY"
-#         elif (ce_net < 0 and pe_net < 0) and volume_ratio < -volume_ratio_threshold:
-#             ratio = 0
-#             signal = "SELL"
-#             if (ce_net < 0 and pe_net > 0) :
-#                 ratio = (ce_net - pe_net) / (abs(ce_net) + abs(pe_net)) if (abs(ce_net) + abs(pe_net)) != 0 else 0
-#                 if ratio < -ratio_threshold and volume_ratio < -volume_ratio_threshold and fair_bool:
-#                     signal = "SELL"
-
-#         # 12. Diagnostic output
-#         st.markdown(
-#                 f"""
-#             **{range_type}**<br>
-#             **Range:** {lower_bound:.2f} to {upper_bound:.2f}<br>
-#             **CE Net Flow (ITM-OTM):** {ce_net:,.0f}<br>
-#             **PE Net Flow (ITM-OTM):** {pe_net:,.0f}<br>
-#             **Ratio:** {ratio:.2f}<br>
-#             **Volume Ratio:** {volume_ratio:.2f}<br>
-#             **ATM Prices:** CE={atm_ce_price:.2f}  PE={atm_pe_price:.2f}<br>
-#             **ATM Diff:** {diff_pct:.2f}%<br>
-#             **Fair:** {fair_bool}
-#             """,
-#                 unsafe_allow_html=True
-#             )
-
-#         return signal, ratio, volume_ratio
-
-#     except Exception as e:
-#         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
-#         st.write(f"exception")
-#         return "SIDEWAYS", 0, 0
 
 # Optimized strike selection
 def select_strikes_atm_half_price(chain, atm_strike):
@@ -857,7 +822,7 @@ def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers)
         return []
 
 # Data display functions with improved formatting
-def format_and_show(chain, title, ltp, show_signals=False):
+def format_and_show(chain, title, ltp, show_signals=False,fyers_api=None):
     df = pd.DataFrame(chain)
     if df.empty:
         st.info(f"No data for {title}")
@@ -913,7 +878,7 @@ def format_and_show(chain, title, ltp, show_signals=False):
         # Calculate all required metrics
         strikes = sorted(merged["Strike"].dropna().unique().tolist())
         idx = strikes.index(atm)
-        signal, ratio, volume_ratio = compute_signals(merged, atm, ltp)
+        signal, ratio, volume_ratio = compute_signals(merged, atm, ltp,fyers_api=fyers_api)
        # Display results with improved formatting
         st.success(f"Signal: {signal}")
 
@@ -959,6 +924,119 @@ def update_all_data(cid, token, sym, paper_trade_enabled):
         update_unrealized_pnl(cid, token)
 
     return ltp, chain, curr_date
+
+def calculate_daily_metrics(trade_history):
+    if not trade_history:
+        return None
+    
+    df = pd.DataFrame(trade_history)
+    
+    # Convert timestamp to datetime
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df['date'] = df['timestamp'].dt.date
+    
+    # Calculate PnL if not present
+    if 'pnl' not in df.columns:
+        df['pnl'] = 0  # Default to 0 if PnL not calculated
+    
+    # Group by date
+    daily = df.groupby('date').agg({
+        'symbol': 'count',
+        'pnl': ['sum', lambda x: (x > 0).sum(), lambda x: (x < 0).sum()],
+        'price': lambda x: abs(x).sum()  # For volume proxy
+    })
+    
+    daily.columns = ['total_trades', 'net_pnl', 'winning_trades', 'losing_trades', 'volume']
+    
+    # Calculate additional metrics
+    daily['win_rate'] = (daily['winning_trades'] / daily['total_trades']) * 100
+    daily['loss_rate'] = (daily['losing_trades'] / daily['total_trades']) * 100
+    
+    # Calculate profit factor
+    gross_profit = df[df['pnl'] > 0].groupby('date')['pnl'].sum()
+    gross_loss = abs(df[df['pnl'] < 0].groupby('date')['pnl'].sum())
+    daily['profit_factor'] = gross_profit / gross_loss.replace(0, 1)  # Avoid division by zero
+    
+    # Calculate expectancy
+    avg_win = df[df['pnl'] > 0].groupby('date')['pnl'].mean()
+    avg_loss = df[df['pnl'] < 0].groupby('date')['pnl'].mean()
+    daily['expectancy'] = (daily['win_rate']/100 * avg_win) + (daily['loss_rate']/100 * avg_loss)
+    
+    # Calculate max win/loss per trade
+    daily['max_win'] = df.groupby('date')['pnl'].max()
+    daily['max_loss'] = df.groupby('date')['pnl'].min()
+    
+    # Calculate risk-reward ratio
+    daily['risk_reward'] = abs(avg_win / avg_loss.replace(0, 1))  # Avoid division by zero
+    
+    return daily.reset_index()
+
+def show_daily_analysis_page():
+    st.subheader("📊 Daily Trade Analysis")
+    
+    if not st.session_state.trade_history:
+        st.info("No trade history available yet")
+        return
+    
+    # Calculate metrics
+    daily_metrics = calculate_daily_metrics(st.session_state.trade_history)
+    
+    if daily_metrics is None:
+        st.warning("Could not calculate daily metrics")
+        return
+    
+    # Display key metrics
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Total Trading Days", len(daily_metrics))
+    col2.metric("Average Daily PnL", f"₹{daily_metrics['net_pnl'].mean():.2f}")
+    col3.metric("Average Win Rate", f"{daily_metrics['win_rate'].mean():.1f}%")
+    
+    # Show daily performance table
+    st.subheader("Daily Performance Summary")
+    
+    # Format the dataframe for display
+    display_df = daily_metrics.copy()
+    display_df['net_pnl'] = display_df['net_pnl'].apply(lambda x: f"₹{x:.2f}")
+    display_df['volume'] = display_df['volume'].apply(lambda x: f"₹{x:,.2f}")
+    display_df['win_rate'] = display_df['win_rate'].apply(lambda x: f"{x:.1f}%")
+    display_df['loss_rate'] = display_df['loss_rate'].apply(lambda x: f"{x:.1f}%")
+    display_df['profit_factor'] = display_df['profit_factor'].apply(lambda x: f"{x:.2f}")
+    display_df['expectancy'] = display_df['expectancy'].apply(lambda x: f"₹{x:.2f}")
+    display_df['max_win'] = display_df['max_win'].apply(lambda x: f"₹{x:.2f}")
+    display_df['max_loss'] = display_df['max_loss'].apply(lambda x: f"₹{x:.2f}")
+    display_df['risk_reward'] = display_df['risk_reward'].apply(lambda x: f"{x:.2f}")
+    
+    st.dataframe(display_df)
+    
+    # Visualizations
+    st.subheader("Performance Charts")
+    
+    # PnL over time
+    fig1 = px.line(daily_metrics, x='date', y='net_pnl', 
+                  title='Daily Net PnL Trend',
+                  labels={'net_pnl': 'Net PnL (₹)', 'date': 'Date'})
+    st.plotly_chart(fig1, use_container_width=True)
+    
+    # Win rate over time
+    fig2 = px.line(daily_metrics, x='date', y='win_rate', 
+                  title='Daily Win Rate Trend',
+                  labels={'win_rate': 'Win Rate (%)', 'date': 'Date'})
+    st.plotly_chart(fig2, use_container_width=True)
+    
+    # Profit factor over time
+    fig3 = px.bar(daily_metrics, x='date', y='profit_factor', 
+                 title='Daily Profit Factor',
+                 labels={'profit_factor': 'Profit Factor', 'date': 'Date'})
+    st.plotly_chart(fig3, use_container_width=True)
+    
+    # Download button
+    csv = daily_metrics.to_csv(index=False)
+    st.download_button(
+        label="📥 Download Daily Metrics",
+        data=csv,
+        file_name="daily_trade_metrics.csv",
+        mime="text/csv"
+    )
 
 # UI Pages
 def show_signal_history():
@@ -1118,6 +1196,8 @@ def main():
             st.session_state.page = "signal_history"
         if st.button("🔙 Back to Trading"):
             st.session_state.page = "trading"
+        if st.button("📊 Daily Trade Analysis"):
+            st.session_state.page = "daily_analysis"
         if paper_trade:
             if st.button("📊 Paper Trading Dashboard"):
                 st.session_state.page = "paper_trading"
@@ -1146,18 +1226,13 @@ def main():
         st.info("Enter credentials in the sidebar.")
         return
 
-    # Update data
-    ltp, chain, curr_date = update_all_data(cid, token, sym, paper_trade)
-
-    ist = pytz.timezone("Asia/Kolkata")
-    st.write(f"🕒 Updated: {datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S')}")
-
-    if ltp:
-        st.success(f"📊 Underlying LTP: {ltp}")
-
     # Page routing
     if st.session_state.page == "signal_history":
         show_signal_history()
+        return
+
+    if st.session_state.page == "daily_analysis":
+        show_daily_analysis_page()
         return
 
     if st.session_state.page == "paper_trading" and paper_trade:
@@ -1167,8 +1242,19 @@ def main():
     # Main trading page
     st.subheader("📈 Live Trading")
 
+    # Update data
+    ltp, chain, curr_date = update_all_data(cid, token, sym, paper_trade)
+
+    ist = pytz.timezone("Asia/Kolkata")
+    st.write(f"🕒 Updated: {datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S')}")
+
+    if ltp:
+        st.success(f"📊 Underlying LTP: {ltp}")
+
     if chain:
-        signal, atm, ratio, volume_ratio = format_and_show(chain, f"Current Expiry: {curr_date}", ltp, show_signals=True)
+        fy = fyersModel.FyersModel(client_id=cid, token=token, is_async=False, log_path="")
+        signal, atm, ratio, volume_ratio = format_and_show(chain, f"Current Expiry: {curr_date}", ltp, show_signals=True, fyers_api=fy)
+
 
         # Record signal history
         if signal and ltp:
