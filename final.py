@@ -149,7 +149,7 @@ def get_symbol_ltp(cid, token, symbol):
     return resp["d"][0]["v"]["lp"]
 
 # Signal computation with improved error handling
-def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1, fyers_api=None):
+def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=5, fyers_api=None):
     """
     Compute intraday trading signals using ITM options only.
     Returns: (signal, net_flow, direction_ratio)
