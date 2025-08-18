@@ -149,9 +149,119 @@ def get_symbol_ltp(cid, token, symbol):
     return resp["d"][0]["v"]["lp"]
 
 # Signal computation with improved error handling
+# def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=5, fyers_api=None):
+#     """
+#     Compute intraday trading signals using ITM options only.
+#     Returns: (signal, net_flow, direction_ratio)
+#     """
+#     try:
+#         def safe_val(series, default=0):
+#             """Safe extraction from series."""
+#             return series.iloc[0] if not series.empty and not pd.isna(series.iloc[0]) else default
+
+#         # 1. Determine price range around ATM
+#         atm_row = merged_df[merged_df["Strike"] == atm_strike]
+#         atm_ce_price = safe_val(atm_row["CE_ltp"])
+#         atm_pe_price = safe_val(atm_row["PE_ltp"])
+#         price_range = atm_ce_price + atm_pe_price
+
+#         min_range_abs = ltp * (min_range_pct / 100)
+
+#         if price_range >= min_range_abs:
+#             lower_bound = atm_strike - price_range
+#             upper_bound = atm_strike + price_range
+#             range_type = f"ATM+CE Range (±{price_range:.2f} points)"
+#         else:
+#             lower_bound = ltp * (1 - min_range_pct/100)
+#             upper_bound = ltp * (1 + min_range_pct/100)
+#             range_type = f"{min_range_pct}% Underlying Range"
+
+#         strikes = sorted(merged_df["Strike"].dropna().unique())
+#         range_strikes = [s for s in strikes if lower_bound <= s <= upper_bound]
+
+#         if not range_strikes:
+#             logging.warning(f"No strikes in range {lower_bound:.2f}-{upper_bound:.2f}")
+#             return "SIDEWAYS", 0, 0
+
+#         # 2. Fill missing values
+#         merged_df = merged_df.fillna(0)
+#         merged_df["CE_moneyflow"] = merged_df["CE_ltp"] * merged_df["CE_Vol"]
+#         merged_df["PE_moneyflow"] = merged_df["PE_ltp"] * merged_df["PE_Vol"]
+
+#         range_df = merged_df[merged_df["Strike"].isin(range_strikes)].copy()
+
+#         # 3. Fyers API quotes for ITM strikes
+#         if fyers_api and 'CE_symbol' in range_df.columns and 'PE_symbol' in range_df.columns:
+#             try:
+#                 symbols = list(set(range_df['CE_symbol'].tolist() + range_df['PE_symbol'].tolist()))
+#                 symbols = [s for s in symbols if s != 0 and isinstance(s, str)]
+#                 quotes = {}
+#                 for i in range(0, len(symbols), 50):
+#                     batch = symbols[i:i+50]
+#                     response = fyers_api.quotes({"symbols": ",".join(batch)})
+#                     if response.get('code') == 200:
+#                         quotes.update({item['n']: item['v'] for item in response['d'] if item['s'] == 'ok'})
+#                 for idx, row in range_df.iterrows():
+#                     if row['CE_symbol'] in quotes:
+#                         ce_data = quotes[row['CE_symbol']]
+#                         range_df.at[idx, 'CE_vs_open'] = 'ABOVE' if ce_data.get('lp', 0) > ce_data.get('open_price', 0) else 'BELOW'
+#                     if row['PE_symbol'] in quotes:
+#                         pe_data = quotes[row['PE_symbol']]
+#                         range_df.at[idx, 'PE_vs_open'] = 'ABOVE' if pe_data.get('lp', 0) > pe_data.get('open_price', 0) else 'BELOW'
+#             except Exception as e:
+#                 logging.warning(f"Fyers quotes error: {str(e)}")
+
+#         # 4. Select ITM strikes
+#         atm_idx = range_strikes.index(atm_strike) if atm_strike in range_strikes else len(range_strikes)//2
+#         itm_ce_strikes = range_strikes[:atm_idx+1]  # including ATM
+#         itm_pe_strikes = range_strikes[atm_idx:]    # including ATM
+
+#         # 5. Calculate money flow and direction ratio
+#         ce_net = range_df[range_df["Strike"].isin(itm_ce_strikes)]["CE_moneyflow"].sum()
+#         pe_net = range_df[range_df["Strike"].isin(itm_pe_strikes)]["PE_moneyflow"].sum()
+#         net_flow = (ce_net - pe_net) / (ce_net + pe_net) if (ce_net + pe_net) != 0 else 0
+
+#         ce_above_open = range_df[range_df["Strike"].isin(itm_ce_strikes) & (range_df["CE_vs_open"] == 'ABOVE')].shape[0]
+#         pe_above_open = range_df[range_df["Strike"].isin(itm_pe_strikes) & (range_df["PE_vs_open"] == 'ABOVE')].shape[0]
+
+#         direction_ratio = (ce_above_open - pe_above_open) / max(len(itm_ce_strikes) + len(itm_pe_strikes), 1)
+
+#         # 6. Fairness check
+#         diff_pct = abs(atm_ce_price - atm_pe_price) / max(atm_ce_price, atm_pe_price) * 100
+#         fair_bool = diff_pct <= tolerance_pct
+
+#         # 7. Generate signal
+#         signal = "SIDEWAYS"
+#         if net_flow > 0.15 and direction_ratio >= 0.3 and fair_bool:
+#             signal = "BUY"
+#         if net_flow > 0.15 and direction_ratio >= 0.3 and fair_bool:
+#             pass
+#         elif net_flow < -0.15 and direction_ratio <= -0.3 and fair_bool:
+#             signal = "SELL"
+#         # st.info(f"ce_net: {ce_net} | pe_net: {pe_net} | net_flow: {net_flow} | direction_ratio: {direction_ratio:.2f} | fair_bool: {fair_bool} | diff_pct: {diff_pct:.2f}%")
+#         st.markdown(f"""
+#         **{range_type}**  <br>
+#         **Range:** {lower_bound:.2f} to {upper_bound:.2f}  <br>
+#         **ITM CE Strikes :** {list(itm_ce_strikes)}  <br>
+#         **ITM PE Strikes :** {list(itm_pe_strikes)} <br>
+#         **CE Money Flow :** {ce_net:.2f} <br> 
+#         **PE Money Flow :** {pe_net:.2f} <br>
+#         **Net Money Flow :** {net_flow:.2f}  <br>
+#         **Direction Ratio:** {direction_ratio:.2f}  | ce_above_open: {ce_above_open} | pe_above_open: {pe_above_open} | total : {len(itm_ce_strikes) + len(itm_pe_strikes)} <br>
+#         **ATM Prices:** CE={atm_ce_price:.2f} | PE={atm_pe_price:.2f}  <br>
+#         **ATM Diff:** {diff_pct:.2f}%  <br>
+#         **Tolerance %:** {tolerance_pct:.2f}% <br>
+#         **Fair:** {fair_bool}         
+#         """, unsafe_allow_html=True)
+#         return signal
+
+#     except Exception as e:
+#         logging.error(f"Error in compute_signals_itm_only: {str(e)}", exc_info=True)
+#         return "SIDEWAYS"
 def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=5, fyers_api=None):
     """
     Compute intraday trading signals using ITM options only.
+    Now using ATP (Average Traded Price) instead of VWAP for comparison.
     Returns: (signal, net_flow, direction_ratio)
     """
     try:
@@ -175,8 +285,15 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=5
             lower_bound = ltp * (1 - min_range_pct/100)
             upper_bound = ltp * (1 + min_range_pct/100)
             range_type = f"{min_range_pct}% Underlying Range"
+        def round_to_nearest_strike(value, strikes):
+            """Round to the nearest available strike price"""
+            if not strikes:
+                return value
+            return min(strikes, key=lambda x: abs(x - value))
 
         strikes = sorted(merged_df["Strike"].dropna().unique())
+        lower_bound = round_to_nearest_strike(lower_bound, strikes)
+        upper_bound = round_to_nearest_strike(upper_bound, strikes)
         range_strikes = [s for s in strikes if lower_bound <= s <= upper_bound]
 
         if not range_strikes:
@@ -189,8 +306,9 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=5
         merged_df["PE_moneyflow"] = merged_df["PE_ltp"] * merged_df["PE_Vol"]
 
         range_df = merged_df[merged_df["Strike"].isin(range_strikes)].copy()
+        # st.write(range_df)
 
-        # 3. Fyers API quotes for ITM strikes
+        # 3. Fyers API quotes for ITM strikes - comparing LTP vs ATP
         if fyers_api and 'CE_symbol' in range_df.columns and 'PE_symbol' in range_df.columns:
             try:
                 symbols = list(set(range_df['CE_symbol'].tolist() + range_df['PE_symbol'].tolist()))
@@ -201,30 +319,48 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=5
                     response = fyers_api.quotes({"symbols": ",".join(batch)})
                     if response.get('code') == 200:
                         quotes.update({item['n']: item['v'] for item in response['d'] if item['s'] == 'ok'})
+                
+                # Initialize default values
+                range_df['CE_vs_atp'] = 'BELOW'  # Default to BELOW if no data
+                range_df['PE_vs_atp'] = 'BELOW'
+                
                 for idx, row in range_df.iterrows():
                     if row['CE_symbol'] in quotes:
                         ce_data = quotes[row['CE_symbol']]
-                        range_df.at[idx, 'CE_vs_open'] = 'ABOVE' if ce_data.get('lp', 0) > ce_data.get('open_price', 0) else 'BELOW'
+                        ltp = ce_data.get('lp', 0)
+                        atp = ce_data.get('atp', 0)
+                        # st.write(f"CE Symbol: {row['CE_symbol']} | LTP: {ltp} | ATP: {atp}")
+                        if atp > 0:  # Only compare if we have valid ATP
+                            range_df.at[idx, 'CE_vs_atp'] = 'ABOVE' if ltp > atp else 'BELOW'
+                        # Update LTP with live data
+                        range_df.at[idx, 'CE_ltp'] = ltp
+                    
                     if row['PE_symbol'] in quotes:
                         pe_data = quotes[row['PE_symbol']]
-                        range_df.at[idx, 'PE_vs_open'] = 'ABOVE' if pe_data.get('lp', 0) > pe_data.get('open_price', 0) else 'BELOW'
+                        ltp = pe_data.get('lp', 0)
+                        atp = pe_data.get('atp', 0)
+                        if atp > 0:
+                            range_df.at[idx, 'PE_vs_atp'] = 'ABOVE' if ltp > atp else 'BELOW'
+                        # Update LTP with live data
+                        range_df.at[idx, 'PE_ltp'] = ltp
             except Exception as e:
                 logging.warning(f"Fyers quotes error: {str(e)}")
 
         # 4. Select ITM strikes
         atm_idx = range_strikes.index(atm_strike) if atm_strike in range_strikes else len(range_strikes)//2
-        itm_ce_strikes = range_strikes[:atm_idx+1]  # including ATM
-        itm_pe_strikes = range_strikes[atm_idx:]    # including ATM
+        itm_ce_strikes = range_strikes[:atm_idx]  # exclude ATM
+        itm_pe_strikes = range_strikes[atm_idx+1:]    # exclude ATM
+        # st.write(range_df)
 
-        # 5. Calculate money flow and direction ratio
+        # 5. Calculate money flow and direction ratio (using ATP comparison)
         ce_net = range_df[range_df["Strike"].isin(itm_ce_strikes)]["CE_moneyflow"].sum()
         pe_net = range_df[range_df["Strike"].isin(itm_pe_strikes)]["PE_moneyflow"].sum()
         net_flow = (ce_net - pe_net) / (ce_net + pe_net) if (ce_net + pe_net) != 0 else 0
 
-        ce_above_open = range_df[range_df["Strike"].isin(itm_ce_strikes) & (range_df["CE_vs_open"] == 'ABOVE')].shape[0]
-        pe_above_open = range_df[range_df["Strike"].isin(itm_pe_strikes) & (range_df["PE_vs_open"] == 'ABOVE')].shape[0]
+        ce_above_atp = range_df[range_df["Strike"].isin(itm_ce_strikes) & (range_df["CE_vs_atp"] == 'ABOVE')].shape[0]
+        pe_above_atp = range_df[range_df["Strike"].isin(itm_pe_strikes) & (range_df["PE_vs_atp"] == 'ABOVE')].shape[0]
 
-        direction_ratio = (ce_above_open - pe_above_open) / max(len(itm_ce_strikes) + len(itm_pe_strikes), 1)
+        direction_ratio = (ce_above_atp - pe_above_atp) / max(len(itm_ce_strikes) + len(itm_pe_strikes), 1)
 
         # 6. Fairness check
         diff_pct = abs(atm_ce_price - atm_pe_price) / max(atm_ce_price, atm_pe_price) * 100
@@ -236,26 +372,28 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=5
             signal = "BUY"
         elif net_flow < -0.15 and direction_ratio <= -0.3 and fair_bool:
             signal = "SELL"
-        # st.info(f"ce_net: {ce_net} | pe_net: {pe_net} | net_flow: {net_flow} | direction_ratio: {direction_ratio:.2f} | fair_bool: {fair_bool} | diff_pct: {diff_pct:.2f}%")
-        # st.markdown(f"""
-        # **{range_type}**  <br>
-        # **Range:** {lower_bound:.2f} to {upper_bound:.2f}  <br>
-        # **ITM CE Strikes :** {list(itm_ce_strikes)}  <br>
-        # **ITM PE Strikes :** {list(itm_pe_strikes)} <br>
-        # **CE Money Flow :** {ce_net:.2f} <br> 
-        # **PE Money Flow :** {pe_net:.2f} <br>
-        # **Net Money Flow :** {net_flow:.2f}  <br>
-        # **Direction Ratio:** {direction_ratio:.2f}  | ce_above_open: {ce_above_open} | pe_above_open: {pe_above_open} | total : {len(itm_ce_strikes) + len(itm_pe_strikes)} <br>
-        # **ATM Prices:** CE={atm_ce_price:.2f} | PE={atm_pe_price:.2f}  <br>
-        # **ATM Diff:** {diff_pct:.2f}%  <br>
-        # **Tolerance %:** {tolerance_pct:.2f}% <br>
-        # **Fair:** {fair_bool}         
-        # """, unsafe_allow_html=True)
+
+        st.markdown(f"""
+        **{range_type}**  <br>
+        **Range:** {lower_bound:.2f} to {upper_bound:.2f}  <br>
+        **ITM CE Strikes:** {list(itm_ce_strikes)}  <br>
+        **ITM PE Strikes:** {list(itm_pe_strikes)} <br>
+        **CE Money Flow:** {ce_net:.2f} <br> 
+        **PE Money Flow:** {pe_net:.2f} <br>
+        **Net Money Flow:** {net_flow:.2f}  <br>
+        **Direction Ratio:** {direction_ratio:.2f}  | CE Above ATP: {ce_above_atp} | PE Above ATP: {pe_above_atp} | Total Strikes: {len(itm_ce_strikes) + len(itm_pe_strikes)} <br>
+        **ATM Prices:** CE={atm_ce_price:.2f} | PE={atm_pe_price:.2f}  <br>
+        **ATM Diff:** {diff_pct:.2f}%  <br>
+        **Tolerance %:** {tolerance_pct:.2f}% <br>
+        **Fair:** {fair_bool}         
+        """, unsafe_allow_html=True)
         return signal
 
     except Exception as e:
-        logging.error(f"Error in compute_signals_itm_only: {str(e)}", exc_info=True)
+        logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
         return "SIDEWAYS"
+    
+
 
 # Optimized strike selection
 def select_strikes_atm_half_price(chain, atm_strike):
