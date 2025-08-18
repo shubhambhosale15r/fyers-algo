@@ -232,9 +232,9 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
 
         # 7. Generate signal
         signal = "SIDEWAYS"
-        if net_flow > 0.33 and direction_ratio >= 0.33 and fair_bool:
+        if net_flow > 0.15 and direction_ratio >= 0.3 and fair_bool:
             signal = "BUY"
-        elif net_flow < -0.33 and direction_ratio <= -0.33 and fair_bool:
+        elif net_flow < -0.15 and direction_ratio <= -0.3 and fair_bool:
             signal = "SELL"
         # st.info(f"ce_net: {ce_net} | pe_net: {pe_net} | net_flow: {net_flow} | direction_ratio: {direction_ratio:.2f} | fair_bool: {fair_bool} | diff_pct: {diff_pct:.2f}%")
         # st.markdown(f"""
