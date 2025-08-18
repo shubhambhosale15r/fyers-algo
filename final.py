@@ -273,6 +273,10 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=5
         atm_row = merged_df[merged_df["Strike"] == atm_strike]
         atm_ce_price = safe_val(atm_row["CE_ltp"])
         atm_pe_price = safe_val(atm_row["PE_ltp"])
+        atm_ce_volume = safe_val(atm_row["CE_Vol"])
+        atm_pe_volume = safe_val(atm_row["PE_Vol"])
+        atm_ce_moneyflow = atm_ce_price * atm_ce_volume
+        atm_pe_moneyflow = atm_pe_price * atm_pe_volume
         price_range = atm_ce_price + atm_pe_price
 
         min_range_abs = ltp * (min_range_pct / 100)
@@ -362,15 +366,17 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=5
 
         direction_ratio = (ce_above_atp - pe_above_atp) / max(len(itm_ce_strikes) + len(itm_pe_strikes), 1)
 
+    
         # 6. Fairness check
-        diff_pct = abs(atm_ce_price - atm_pe_price) / max(atm_ce_price, atm_pe_price) * 100
+        # diff_pct = abs(atm_ce_price - atm_pe_price) / max(atm_ce_price, atm_pe_price) * 100
+        diff_pct = abs(atm_ce_moneyflow - atm_pe_moneyflow) / max(atm_ce_moneyflow, atm_pe_moneyflow) * 100
         fair_bool = diff_pct <= tolerance_pct
 
         # 7. Generate signal
         signal = "SIDEWAYS"
-        if net_flow > 0.15 and direction_ratio >= 0.3 and fair_bool:
+        if net_flow > 0 and direction_ratio > 0 and fair_bool:
             signal = "BUY"
-        elif net_flow < -0.15 and direction_ratio <= -0.3 and fair_bool:
+        elif net_flow < 0 and direction_ratio < 0 and fair_bool:
             signal = "SELL"
 
         # st.markdown(f"""
@@ -383,6 +389,7 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=5
         # **Net Money Flow:** {net_flow:.2f}  <br>
         # **Direction Ratio:** {direction_ratio:.2f}  | CE Above ATP: {ce_above_atp} | PE Above ATP: {pe_above_atp} | Total Strikes: {len(itm_ce_strikes) + len(itm_pe_strikes)} <br>
         # **ATM Prices:** CE={atm_ce_price:.2f} | PE={atm_pe_price:.2f}  <br>
+        # **ATM Moneyflow:** CE={atm_ce_volume*atm_ce_price} | PE={atm_pe_volume*atm_pe_price} <br>
         # **ATM Diff:** {diff_pct:.2f}%  <br>
         # **Tolerance %:** {tolerance_pct:.2f}% <br>
         # **Fair:** {fair_bool}         
