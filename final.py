@@ -294,16 +294,16 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
         elif net_flow < -0.66 and direction_ratio < 0:
             st.info("Market is in SELL looking for entries")  
 
-        st.markdown(f"""
-        **{range_type}**  <br>
-        **Range:** {lower_bound:.2f} to {upper_bound:.2f}  <br>
-        **ITM CE Strikes:** {list(itm_ce_strikes)}  <br>
-        **ITM PE Strikes:** {list(itm_pe_strikes)} <br>
-        **CE Money Flow:** {ce_net:.2f} <br> 
-        **PE Money Flow:** {pe_net:.2f} <br>
-        **Net Money Flow:** {net_flow:.2f}  <br>
-        **Direction Ratio:** {direction_ratio:.2f}  | CE Above ATP: {ce_above_atp} | PE Above ATP: {pe_above_atp} | Total Strikes: {len(itm_ce_strikes) + len(itm_pe_strikes)} <br>         
-        """, unsafe_allow_html=True)
+        # st.markdown(f"""
+        # **{range_type}**  <br>
+        # **Range:** {lower_bound:.2f} to {upper_bound:.2f}  <br>
+        # **ITM CE Strikes:** {list(itm_ce_strikes)}  <br>
+        # **ITM PE Strikes:** {list(itm_pe_strikes)} <br>
+        # **CE Money Flow:** {ce_net:.2f} <br> 
+        # **PE Money Flow:** {pe_net:.2f} <br>
+        # **Net Money Flow:** {net_flow:.2f}  <br>
+        # **Direction Ratio:** {direction_ratio:.2f}  | CE Above ATP: {ce_above_atp} | PE Above ATP: {pe_above_atp} | Total Strikes: {len(itm_ce_strikes) + len(itm_pe_strikes)} <br>         
+        # """, unsafe_allow_html=True)
         return signal
 
     except Exception as e:
