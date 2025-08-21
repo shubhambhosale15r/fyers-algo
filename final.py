@@ -283,16 +283,21 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
 
         # 7. Generate signal
         signal = "SIDEWAYS"
-        if net_flow > 0.33 and net_flow <= 0.66 and direction_ratio > 0:
+        
+        if 0.33 < net_flow <= 0.66 and direction_ratio > 0:
             st.info("Market is in BUY entry found entering the trade")
             signal = "BUY"
+        
         elif net_flow > 0.66 and direction_ratio > 0:
-            st.info("Market is in BUY looking for entries") 
-        elif net_flow < -0.33 and net_flow <= -0.66 and direction_ratio < 0:
+            st.info("Market is in BUY looking for entries")
+        
+        elif -0.66 <= net_flow < -0.33 and direction_ratio < 0:
             st.info("Market is in SELL entry found entering the trade")
             signal = "SELL"
+        
         elif net_flow < -0.66 and direction_ratio < 0:
-            st.info("Market is in SELL looking for entries")  
+            st.info("Market is in SELL looking for entries")
+ 
 
         # st.markdown(f"""
         # **{range_type}**  <br>
