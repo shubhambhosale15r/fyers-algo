@@ -240,28 +240,35 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
                 # Initialize default values
                 range_df['CE_vs_atp'] = 'BELOW'  # Default to BELOW if no data
                 range_df['PE_vs_atp'] = 'BELOW'
+                range_df['ce_strength'] = "LOW"
+                range_df['pe_strength'] = "LOW"
                 
                 for idx, row in range_df.iterrows():
                     if row['CE_symbol'] in quotes:
                         ce_data = quotes[row['CE_symbol']]
                         ltp = ce_data.get('lp', 0)
                         atp = ce_data.get('atp', 0)
-                        if atp > 0:  # Only compare if we have valid ATP
+                        high_price = ce_data.get('high_price', 0)
+                        if atp > 0:
                             range_df.at[idx, 'CE_vs_atp'] = 'ABOVE' if ltp > atp else 'BELOW'
-                        # Update LTP with live data
+                        if high_price > 0 and ltp > 0:
+                            range_df.at[idx, 'CE_high_diff'] = high_price - ltp
                         range_df.at[idx, 'CE_ltp'] = ltp
-                    
+
                     if row['PE_symbol'] in quotes:
                         pe_data = quotes[row['PE_symbol']]
                         ltp = pe_data.get('lp', 0)
                         atp = pe_data.get('atp', 0)
+                        high_price = pe_data.get('high_price', 0)
                         if atp > 0:
                             range_df.at[idx, 'PE_vs_atp'] = 'ABOVE' if ltp > atp else 'BELOW'
-                        # Update LTP with live data
+                        if high_price > 0 and ltp > 0:
+                            range_df.at[idx, 'PE_high_diff'] = high_price - ltp
                         range_df.at[idx, 'PE_ltp'] = ltp
+
             except Exception as e:
                 logging.warning(f"Fyers quotes error: {str(e)}")
-
+        # st.write(range_df)
         # 4. Select ITM strikes
         atm_idx = range_strikes.index(atm_strike) if atm_strike in range_strikes else len(range_strikes)//2
         itm_ce_strikes = range_strikes[:atm_idx]  # exclude ATM
@@ -277,38 +284,39 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
 
         direction_ratio = (ce_above_atp - pe_above_atp) / max(len(itm_ce_strikes) + len(itm_pe_strikes), 1)
 
-        # 6. Fairness check
-        diff_pct = abs(atm_ce_moneyflow - atm_pe_moneyflow) / max(atm_ce_moneyflow, atm_pe_moneyflow) * 100
-        fair_bool = diff_pct <= tolerance_pct
+        ce_high_diff_avg = range_df[range_df["Strike"].isin(itm_ce_strikes)]["CE_high_diff"].mean()
+        pe_high_diff_avg = range_df[range_df["Strike"].isin(itm_pe_strikes)]["PE_high_diff"].mean()
+        
+        st.write(f"")
 
         # 7. Generate signal
         signal = "SIDEWAYS"
-        
-        if 0.33 < net_flow <= 0.66 and direction_ratio > 0:
+
+        if 0.33 < net_flow <= 0.66 and direction_ratio > 0 and ce_high_diff_avg < pe_high_diff_avg:
             st.info("Market is in BUY entry found entering the trade")
             signal = "BUY"
-        
-        elif net_flow > 0.66 and direction_ratio > 0:
+
+        elif net_flow > 0.66 and direction_ratio > 0 and ce_high_diff_avg < pe_high_diff_avg:
             st.info("Market is in BUY looking for entries")
-        
-        elif -0.66 <= net_flow < -0.33 and direction_ratio < 0:
+
+        elif -0.66 <= net_flow < -0.33 and direction_ratio < 0 and pe_high_diff_avg < ce_high_diff_avg:
             st.info("Market is in SELL entry found entering the trade")
             signal = "SELL"
-        
-        elif net_flow < -0.66 and direction_ratio < 0:
-            st.info("Market is in SELL looking for entries")
- 
 
-        # st.markdown(f"""
-        # **{range_type}**  <br>
-        # **Range:** {lower_bound:.2f} to {upper_bound:.2f}  <br>
-        # **ITM CE Strikes:** {list(itm_ce_strikes)}  <br>
-        # **ITM PE Strikes:** {list(itm_pe_strikes)} <br>
-        # **CE Money Flow:** {ce_net:.2f} <br> 
-        # **PE Money Flow:** {pe_net:.2f} <br>
-        # **Net Money Flow:** {net_flow:.2f}  <br>
-        # **Direction Ratio:** {direction_ratio:.2f}  | CE Above ATP: {ce_above_atp} | PE Above ATP: {pe_above_atp} | Total Strikes: {len(itm_ce_strikes) + len(itm_pe_strikes)} <br>         
-        # """, unsafe_allow_html=True)
+        elif net_flow < -0.66 and direction_ratio < 0 and pe_high_diff_avg < ce_high_diff_avg:
+            st.info("Market is in SELL looking for entries")
+
+        st.markdown(f"""
+        **{range_type}**  <br>
+        **Range:** {lower_bound:.2f} to {upper_bound:.2f}  <br>
+        **ITM CE Strikes:** {list(itm_ce_strikes)}  <br>
+        **ITM PE Strikes:** {list(itm_pe_strikes)} <br>
+        **CE Money Flow:** {ce_net:.2f} <br> 
+        **PE Money Flow:** {pe_net:.2f} <br>
+        **Net Money Flow:** {net_flow:.2f}  <br>
+        **Direction Ratio:** {direction_ratio:.2f}  | CE Above ATP: {ce_above_atp} | PE Above ATP: {pe_above_atp} | Total Strikes: {len(itm_ce_strikes) + len(itm_pe_strikes)} <br>  
+        **Average CE High Diff:** {ce_high_diff_avg:.2f} | **Average PE High Diff:** {pe_high_diff_avg:.2f}  <br>    
+        """, unsafe_allow_html=True)
         return signal
 
     except Exception as e:
