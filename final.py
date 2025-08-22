@@ -252,6 +252,7 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
                         if atp > 0:
                             range_df.at[idx, 'CE_vs_atp'] = 'ABOVE' if ltp > atp else 'BELOW'
                         if high_price > 0 and ltp > 0:
+                            range_df.at[idx, 'CE_high'] = high_price
                             range_df.at[idx, 'CE_high_diff'] = high_price - ltp
                         range_df.at[idx, 'CE_ltp'] = ltp
 
@@ -263,6 +264,7 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
                         if atp > 0:
                             range_df.at[idx, 'PE_vs_atp'] = 'ABOVE' if ltp > atp else 'BELOW'
                         if high_price > 0 and ltp > 0:
+                            range_df.at[idx, 'PE_high'] = high_price
                             range_df.at[idx, 'PE_high_diff'] = high_price - ltp
                         range_df.at[idx, 'PE_ltp'] = ltp
 
@@ -284,39 +286,54 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
 
         direction_ratio = (ce_above_atp - pe_above_atp) / max(len(itm_ce_strikes) + len(itm_pe_strikes), 1)
 
-        ce_high_diff_avg = range_df[range_df["Strike"].isin(itm_ce_strikes)]["CE_high_diff"].mean()
-        pe_high_diff_avg = range_df[range_df["Strike"].isin(itm_pe_strikes)]["PE_high_diff"].mean()
-        
-        st.write(f"")
+        # 6. Convert absolute high diff → % diff from high
+        range_df["CE_high_pct"] = np.where(
+            range_df["CE_high"] > 0,
+            range_df["CE_high_diff"] / range_df["CE_high"],
+            0
+        )
+        range_df["PE_high_pct"] = np.where(
+            range_df["PE_high"] > 0,
+            range_df["PE_high_diff"] / range_df["PE_high"],
+            0
+        )
+
+
+        ce_high_pct_avg = range_df[range_df["Strike"].isin(itm_ce_strikes)]["CE_high_pct"].mean()
+        pe_high_pct_avg = range_df[range_df["Strike"].isin(itm_pe_strikes)]["PE_high_pct"].mean()
+
+        # Strength metric: -1 (PE stronger) → +1 (CE stronger)
+        strength = (ce_high_pct_avg - pe_high_pct_avg) / max(ce_high_pct_avg + pe_high_pct_avg, 1e-6)
+      
 
         # 7. Generate signal
         signal = "SIDEWAYS"
 
-        if 0.33 < net_flow <= 0.66 and direction_ratio > 0 and ce_high_diff_avg < pe_high_diff_avg:
+        if 0.33 < net_flow <= 0.66 and direction_ratio > 0 and strength < -0.33:
             st.info("Market is in BUY entry found entering the trade")
             signal = "BUY"
 
-        elif net_flow > 0.66 and direction_ratio > 0 and ce_high_diff_avg < pe_high_diff_avg:
+        elif net_flow > 0.66 and direction_ratio > 0 and strength < -0.33:
             st.info("Market is in BUY looking for entries")
 
-        elif -0.66 <= net_flow < -0.33 and direction_ratio < 0 and pe_high_diff_avg < ce_high_diff_avg:
+        elif -0.66 <= net_flow < -0.33 and direction_ratio < 0 and strength > 0.33:
             st.info("Market is in SELL entry found entering the trade")
             signal = "SELL"
 
-        elif net_flow < -0.66 and direction_ratio < 0 and pe_high_diff_avg < ce_high_diff_avg:
+        elif net_flow < -0.66 and direction_ratio < 0 and strength > 0.33:
             st.info("Market is in SELL looking for entries")
 
-        # st.markdown(f"""
-        # **{range_type}**  <br>
-        # **Range:** {lower_bound:.2f} to {upper_bound:.2f}  <br>
-        # **ITM CE Strikes:** {list(itm_ce_strikes)}  <br>
-        # **ITM PE Strikes:** {list(itm_pe_strikes)} <br>
-        # **CE Money Flow:** {ce_net:.2f} <br> 
-        # **PE Money Flow:** {pe_net:.2f} <br>
-        # **Net Money Flow:** {net_flow:.2f}  <br>
-        # **Direction Ratio:** {direction_ratio:.2f}  | CE Above ATP: {ce_above_atp} | PE Above ATP: {pe_above_atp} | Total Strikes: {len(itm_ce_strikes) + len(itm_pe_strikes)} <br>  
-        # **Average CE High Diff:** {ce_high_diff_avg:.2f} | **Average PE High Diff:** {pe_high_diff_avg:.2f}  <br>    
-        # """, unsafe_allow_html=True)
+        st.markdown(f"""
+        **{range_type}**  <br>
+        **Range:** {lower_bound:.2f} to {upper_bound:.2f}  <br>
+        **ITM CE Strikes:** {list(itm_ce_strikes)}  <br>
+        **ITM PE Strikes:** {list(itm_pe_strikes)} <br>
+        **CE Money Flow:** {ce_net:.2f} <br> 
+        **PE Money Flow:** {pe_net:.2f} <br>
+        **Net Money Flow:** {net_flow:.2f}  <br>
+        **Direction Ratio:** {direction_ratio:.2f}  | CE Above ATP: {ce_above_atp} | PE Above ATP: {pe_above_atp} | Total Strikes: {len(itm_ce_strikes) + len(itm_pe_strikes)} <br>  
+        **Avg CE % below High:** {ce_high_pct_avg:.2%} | **Avg PE % below High:** {pe_high_pct_avg:.2%} | Strength: {strength:.2f} <br>
+        """, unsafe_allow_html=True)
         return signal
 
     except Exception as e:
