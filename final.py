@@ -26,7 +26,7 @@ class Config:
     REFRESH_INTERVAL = 30  # seconds
     API_RATE_LIMIT = 200
     API_WINDOW = 60  # seconds
-    LOT_SIZE = 75 
+    LOT_SIZE = 75
     MAX_RETRIES = 3
     RETRY_DELAY = 2  # seconds
 
@@ -323,17 +323,17 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
         elif net_flow < -0.66 and direction_ratio < 0 and strength > 0.33:
             st.info("Market is in SELL looking for entries")
 
-        # st.markdown(f"""
-        # **{range_type}**  <br>
-        # **Range:** {lower_bound:.2f} to {upper_bound:.2f}  <br>
-        # **ITM CE Strikes:** {list(itm_ce_strikes)}  <br>
-        # **ITM PE Strikes:** {list(itm_pe_strikes)} <br>
-        # **CE Money Flow:** {ce_net:.2f} <br> 
-        # **PE Money Flow:** {pe_net:.2f} <br>
-        # **Net Money Flow:** {net_flow:.2f}  <br>
-        # **Direction Ratio:** {direction_ratio:.2f}  | CE Above ATP: {ce_above_atp} | PE Above ATP: {pe_above_atp} | Total Strikes: {len(itm_ce_strikes) + len(itm_pe_strikes)} <br>  
-        # **Avg CE % below High:** {ce_high_pct_avg:.2%} | **Avg PE % below High:** {pe_high_pct_avg:.2%} | Strength: {strength:.2f} <br>
-        # """, unsafe_allow_html=True)
+        st.markdown(f"""
+        **{range_type}**  <br>
+        **Range:** {lower_bound:.2f} to {upper_bound:.2f}  <br>
+        **ITM CE Strikes:** {list(itm_ce_strikes)}  <br>
+        **ITM PE Strikes:** {list(itm_pe_strikes)} <br>
+        **CE Money Flow:** {ce_net:.2f} <br> 
+        **PE Money Flow:** {pe_net:.2f} <br>
+        **Net Money Flow:** {net_flow:.2f}  <br>
+        **Direction Ratio:** {direction_ratio:.2f}  | CE Above ATP: {ce_above_atp} | PE Above ATP: {pe_above_atp} | Total Strikes: {len(itm_ce_strikes) + len(itm_pe_strikes)} <br>  
+        **Avg CE % below High:** {ce_high_pct_avg:.2%} | **Avg PE % below High:** {pe_high_pct_avg:.2%} | Strength: {strength:.2f} <br>
+        """, unsafe_allow_html=True)
         return signal
 
     except Exception as e:
@@ -1163,6 +1163,15 @@ def main():
         token = st.text_input("Access Token", type="password", value=st.session_state.token)
         sym = st.selectbox('Choose Index: ', ['NSE:NIFTY50-INDEX', 'BSE:SENSEX-INDEX'])
         st.write(f'You selected: {sym}')
+        quantity = st.number_input(
+            "Quantity",
+            min_value=1,
+            max_value=None,
+            value=Config.LOT_SIZE,  # Uses the default 75 as initial value
+            step=1
+        )
+        # Update the config with user input
+        Config.LOT_SIZE = quantity  # Now becomes whatever user entered
 
         # Store credentials
         st.session_state.cid = cid
