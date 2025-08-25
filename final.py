@@ -771,15 +771,21 @@ def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers)
                         cancel_response = fyers.cancel_order(order["id"])
                         if cancel_response and cancel_response.get("s") == "ok":
                             logging.info(f"Cancelled pending order: {order['id']}")
-                        time.sleep(0.1)  # Small delay between cancellations
+                        time.sleep(1)  # Small delay between cancellations
                 
                 # Exit all existing positions
+                # Separate shorts and longs
+                short_positions = [p for p in positions if int(p.get("qty", 0)) < 0]
+                long_positions = [p for p in positions if int(p.get("qty", 0)) > 0]
+
+                # Exit shorts first, then longs
+                ordered_positions = short_positions + long_positions
                 exit_orders = []
-                for p in positions:
-                    if (p.get("segment") in ["NFO", 11] and 
-                        p.get("qty") != 0 and 
+                for p in ordered_positions:
+                    if (p.get("segment") in ["NFO", 11] and
+                        p.get("qty") != 0 and
                         abs(int(p.get("qty", 0))) > 0):
-                        
+
                         side = -1 if float(p.get("qty", 0)) > 0 else 1
                         exit_orders.append({
                             "symbol": p["symbol"],
@@ -797,7 +803,7 @@ def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers)
                     for order in exit_orders:
                         oid, status = place_order_and_check(fyers, order)
                         if oid is None or status in [1, 5]:  # Canceled or Rejected
-                            logging.error(f"Exit order failed: {order['symbol']}")
+                            st.error(f"Exit order failed: {order['symbol']}")
                             # Cancel any successful exit orders if one fails
                             for pid in placed_ids:
                                 cancel_order(fyers, pid)
@@ -807,7 +813,7 @@ def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers)
                 # Wait for exits to process and verify
                 time.sleep(2)
                 if not verify_positions_closed(fyers, positions):
-                    logging.error("Failed to verify position closure")
+                    st.error("Failed to verify position closure")
                     for pid in placed_ids:
                         cancel_order(fyers, pid)
                     return []
@@ -838,7 +844,7 @@ def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers)
                     for order in entry_orders:
                         oid, status = place_order_and_check(fyers, order)
                         if oid is None or status in [1, 5]:
-                            logging.error(f"Entry order failed: {order['symbol']}")
+                            st.error(f"Entry order failed: {order['symbol']}")
                             # Cancel any successful entry orders
                             for pid in placed_ids:
                                 cancel_order(fyers, pid)
@@ -846,7 +852,7 @@ def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers)
                         placed_ids.append(oid)
 
             except Exception as e:
-                logging.error(f"Failed in BUY→SELL transition: {e}", exc_info=True)
+                st.error(f"Failed in BUY→SELL transition: {e}", exc_info=True)
                 return []
 
         # Case 2: SELL → BUY (Exit SELL first, then Enter BUY)
@@ -857,12 +863,17 @@ def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers)
                     if order.get("segment") in [11, "NFO"]:
                         cancel_response = fyers.cancel_order(order["id"])
                         if cancel_response and cancel_response.get("s") == "ok":
-                            logging.info(f"Cancelled pending order: {order['id']}")
+                            st.info(f"Cancelled pending order: {order['id']}")
                         time.sleep(0.1)
                 
                 # Exit positions
+                # Separate shorts and longs
+                short_positions = [p for p in positions if int(p.get("qty", 0)) < 0]
+                long_positions = [p for p in positions if int(p.get("qty", 0)) > 0]
+                 # Exit shorts first, then longs
+                ordered_positions = short_positions + long_positions
                 exit_orders = []
-                for p in positions:
+                for p in ordered_positions:
                     if (p.get("segment") in ["NFO", 11] and 
                         p.get("qty") != 0 and 
                         abs(int(p.get("qty", 0))) > 0):
@@ -879,11 +890,11 @@ def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers)
                         })
                 
                 if exit_orders:
-                    logging.info(f"[LIVE] Exiting {len(exit_orders)} SELL positions for BUY signal")
+                    st.info(f"[LIVE] Exiting {len(exit_orders)} SELL positions for BUY signal")
                     for order in exit_orders:
                         oid, status = place_order_and_check(fyers, order)
                         if oid is None or status in [1, 5]:
-                            logging.error(f"Exit order failed: {order['symbol']}")
+                            st.error(f"Exit order failed: {order['symbol']}")
                             for pid in placed_ids:
                                 cancel_order(fyers, pid)
                             return []
@@ -891,7 +902,7 @@ def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers)
                 
                 time.sleep(2)
                 if not verify_positions_closed(fyers, positions):
-                    logging.error("Failed to verify position closure")
+                    st.error("Failed to verify position closure")
                     for pid in placed_ids:
                         cancel_order(fyers, pid)
                     return []
@@ -922,14 +933,14 @@ def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers)
                     for order in entry_orders:
                         oid, status = place_order_and_check(fyers, order)
                         if oid is None or status in [1, 5]:
-                            logging.error(f"Entry order failed: {order['symbol']}")
+                            st.error(f"Entry order failed: {order['symbol']}")
                             for pid in placed_ids:
                                 cancel_order(fyers, pid)
                             return []
                         placed_ids.append(oid)
 
             except Exception as e:
-                logging.error(f"Failed in SELL→BUY transition: {e}", exc_info=True)
+                st.error(f"Failed in SELL→BUY transition: {e}", exc_info=True)
                 return []
 
         # Case 3: New signal (no existing position)
@@ -946,8 +957,13 @@ def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers)
                 # Check if there are any existing positions (shouldn't be, but safety check)
                 if positions:
                     logging.warning(f"Found {len(positions)} existing positions for new signal. Closing first.")
+                    # Separate shorts and longs
+                    short_positions = [p for p in positions if int(p.get("qty", 0)) < 0]
+                    long_positions = [p for p in positions if int(p.get("qty", 0)) > 0]
+                    # Exit shorts first, then longs
+                    ordered_positions = short_positions + long_positions
                     exit_orders = []
-                    for p in positions:
+                    for p in ordered_positions:
                         if (p.get("segment") in ["NFO", 11] and 
                             p.get("qty") != 0 and 
                             abs(int(p.get("qty", 0))) > 0):
@@ -968,13 +984,13 @@ def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers)
                         for order in exit_orders:
                             oid, status = place_order_and_check(fyers, order)
                             if oid is None or status in [1, 5]:
-                                logging.error(f"Cleanup order failed: {order['symbol']}")
+                                st.error(f"Cleanup order failed: {order['symbol']}")
                                 return []
                             placed_ids.append(oid)
                         
                         time.sleep(2)
                         if not verify_positions_closed(fyers, positions):
-                            logging.error("Failed to verify cleanup position closure")
+                            st.error("Failed to verify cleanup position closure")
                             return []
                 
                 # Now place new orders
@@ -1021,7 +1037,7 @@ def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers)
                         }
                     ]
                 else:
-                    logging.error(f"Invalid options provided for {signal} signal")
+                    st.error(f"Invalid options provided for {signal} signal")
                     return []
                 
                 for order in entry_orders:
@@ -1034,12 +1050,12 @@ def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers)
                     placed_ids.append(oid)
                     
             except Exception as e:
-                logging.error(f"Failed in new signal placement: {e}", exc_info=True)
+                st.warning(f"Failed in new signal placement: {e}", exc_info=True)
                 return []
 
         # Case 4: SIDEWAYS (do nothing)
         elif signal == "SIDEWAYS":
-            logging.info("[LIVE] SIDEWAYS: Holding positions")
+            st.info("[LIVE] SIDEWAYS: Holding positions")
             return []
 
         # Case 5: Same signal but no open orders (re-entry)
@@ -1047,19 +1063,19 @@ def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers)
             logging.info(f"Signal {signal} is same but no open orders. Re-entering.")
             # This would follow similar logic to Case 3
             # For simplicity, we'll just log and return
-            logging.info("Re-entry logic not implemented. Holding current positions.")
+            st.info("Re-entry logic not implemented. Holding current positions.")
             return []
 
         # Update session state with order IDs for tracking
         if placed_ids:
             st.session_state["last_signal"] = signal
             st.session_state["live_last_signal_order_ids"] = placed_ids
-            logging.info(f"[LIVE] {signal} basket executed successfully! Order IDs: {placed_ids}")
+            st.info(f"[LIVE] {signal} basket executed successfully! Order IDs: {placed_ids}")
         
         return placed_ids
 
     except Exception as e:
-        logging.error(f"Error in handle_basket_orders_atomic: {str(e)}", exc_info=True)
+        st.error(f"Error in handle_basket_orders_atomic: {str(e)}", exc_info=True)
         return []
     
 # Data display functions with improved formatting
