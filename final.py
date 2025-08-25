@@ -23,7 +23,7 @@ st.set_page_config(
 
 # Constants
 class Config:
-    REFRESH_INTERVAL = 30  # seconds
+    REFRESH_INTERVAL = 10  # seconds
     API_RATE_LIMIT = 200
     API_WINDOW = 60  # seconds
     LOT_SIZE = 75
@@ -308,32 +308,45 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
 
         # 7. Generate signal
         signal = "SIDEWAYS"
-
-        if 0.33 < net_flow <= 0.66 and direction_ratio > 0 and strength < -0.33:
+        if direction_ratio >= 0.5 and strength < -0.33:
             st.info("Market is in BUY entry found entering the trade")
             signal = "BUY"
 
-        elif net_flow > 0.66 and direction_ratio > 0 and strength < -0.33:
-            st.info("Market is in BUY looking for entries")
+        # elif  direction_ratio >= 0.5 and strength < -0.33:
+        #     st.info("Market is in BUY looking for entries")
 
-        elif -0.66 <= net_flow < -0.33 and direction_ratio < 0 and strength > 0.33:
+        elif  direction_ratio <= -0.5 and strength > 0.33:
             st.info("Market is in SELL entry found entering the trade")
             signal = "SELL"
 
-        elif net_flow < -0.66 and direction_ratio < 0 and strength > 0.33:
-            st.info("Market is in SELL looking for entries")
+        # elif direction_ratio <= -0.3 and strength > 0.33:
+        #     st.info("Market is in SELL looking for entries")
 
-        # st.markdown(f"""
-        # **{range_type}**  <br>
-        # **Range:** {lower_bound:.2f} to {upper_bound:.2f}  <br>
-        # **ITM CE Strikes:** {list(itm_ce_strikes)}  <br>
-        # **ITM PE Strikes:** {list(itm_pe_strikes)} <br>
-        # **CE Money Flow:** {ce_net:.2f} <br> 
-        # **PE Money Flow:** {pe_net:.2f} <br>
-        # **Net Money Flow:** {net_flow:.2f}  <br>
-        # **Direction Ratio:** {direction_ratio:.2f}  | CE Above ATP: {ce_above_atp} | PE Above ATP: {pe_above_atp} | Total Strikes: {len(itm_ce_strikes) + len(itm_pe_strikes)} <br>  
-        # **Avg CE % below High:** {ce_high_pct_avg:.2%} | **Avg PE % below High:** {pe_high_pct_avg:.2%} | Strength: {strength:.2f} <br>
-        # """, unsafe_allow_html=True)
+        # if 0.33 < net_flow <= 0.66 and direction_ratio > 0 and strength < -0.33:
+        #     st.info("Market is in BUY entry found entering the trade")
+        #     signal = "BUY"
+
+        # elif net_flow > 0.66 and direction_ratio > 0 and strength < -0.33:
+        #     st.info("Market is in BUY looking for entries")
+
+        # elif -0.66 <= net_flow < -0.33 and direction_ratio < 0 and strength > 0.33:
+        #     st.info("Market is in SELL entry found entering the trade")
+        #     signal = "SELL"
+
+        # elif net_flow < -0.66 and direction_ratio < 0 and strength > 0.33:
+        #     st.info("Market is in SELL looking for entries")
+
+        st.markdown(f"""
+        **{range_type}**  <br>
+        **Range:** {lower_bound:.2f} to {upper_bound:.2f}  <br>
+        **ITM CE Strikes:** {list(itm_ce_strikes)}  <br>
+        **ITM PE Strikes:** {list(itm_pe_strikes)} <br>
+        **CE Money Flow:** {ce_net:.2f} <br> 
+        **PE Money Flow:** {pe_net:.2f} <br>
+        **Net Money Flow:** {net_flow:.2f}  <br>
+        **Direction Ratio:** {direction_ratio:.2f}  | CE Above ATP: {ce_above_atp} | PE Above ATP: {pe_above_atp} | Total Strikes: {len(itm_ce_strikes) + len(itm_pe_strikes)} <br>  
+        **Avg CE % below High:** {ce_high_pct_avg:.2%} | **Avg PE % below High:** {pe_high_pct_avg:.2%} | Strength: {strength:.2f} <br>
+        """, unsafe_allow_html=True)
         return signal
 
     except Exception as e:
@@ -360,7 +373,7 @@ def select_strikes_atm_half_price(chain, atm_strike):
         # Find half-price strikes with vectorized operations
         buy_pe_row = None
         if sell_pe_row and "ltp" in sell_pe_row and sell_pe_row["ltp"] > 0:
-            target = sell_pe_row["ltp"] / 4
+            target = sell_pe_row["ltp"] / 2
             pe_candidates = pe[pe["strike_price"] != atm_strike].copy()
             pe_candidates["ltp_diff"] = (pe_candidates["ltp"] - target).abs()
             if not pe_candidates.empty:
@@ -368,7 +381,7 @@ def select_strikes_atm_half_price(chain, atm_strike):
 
         buy_ce_row = None
         if sell_ce_row and "ltp" in sell_ce_row and sell_ce_row["ltp"] > 0:
-            target = sell_ce_row["ltp"] / 4
+            target = sell_ce_row["ltp"] / 2
             ce_candidates = ce[ce["strike_price"] != atm_strike].copy()
             ce_candidates["ltp_diff"] = (ce_candidates["ltp"] - target).abs()
             if not ce_candidates.empty:
@@ -403,39 +416,116 @@ def get_order_status_by_id(fyers, order_id):
         logging.warning(f"Could not fetch order status for {order_id}: {e}")
         return None
 
-@handle_errors
-def place_order_and_check(fyers, order):
-    try:
-        resp = fyers.place_order(data=order)
-        logging.info(f"Order placed for {order['symbol']}: {resp}")
-        
-        if resp.get("s") == "ok":
-            oid = resp.get("id")
-            time.sleep(2)  # Wait for order to process
-            status = get_order_status_by_id(fyers, oid)
-            if status in [1, 5]:  # Rejected or canceled
-                logging.error(f"Order {oid} was rejected or canceled. Status: {status}")
-                return None, status
-            logging.info(f"Order {oid} status: {status}")
-            return oid, status
-        else:
-            logging.error(f"Order failed: {resp}")
-            return None, None
-    except Exception as e:
-        logging.exception(f"Place order error: {e}")
-        raise
 
+##########################################################################
 # Trading logic with improved state management
+#functions added for live auto trade
 def has_open_orders_for_last_signal(fyers):
+    """Check if there are still open orders from the last signal"""
     ids = st.session_state.get("live_last_signal_order_ids", [])
     if not ids:
         return False
+    
     try:
-        ob = fyers.orderbook().get("orderBook", [])
-        return any(o.get("id") in ids and o.get("status") == 2 for o in ob)
+        orderbook_response = fyers.orderbook()
+        order_book = orderbook_response.get("orderBook", []) if orderbook_response else []
+        
+        # Check for any open orders (status 4: Transit, 6: Pending, 7: Expired)
+        open_orders = [o for o in order_book 
+                      if o.get("id") in ids and o.get("status") in [4, 6, 7]]
+        
+        if open_orders:
+            logging.info(f"Found {len(open_orders)} open orders from last signal")
+            return True
+        
+        # Also check if orders were rejected or canceled
+        failed_orders = [o for o in order_book 
+                        if o.get("id") in ids and o.get("status") in [1, 5]]
+        
+        if failed_orders:
+            logging.warning(f"Found {len(failed_orders)} failed orders from last signal")
+            # Clear the failed order IDs from session state
+            remaining_ids = [
+                oid for oid in ids 
+                if not any(o.get("id") == oid for o in failed_orders)
+            ]
+            st.session_state["live_last_signal_order_ids"] = remaining_ids
+        
+        return False
+        
     except Exception as e:
         logging.warning(f"Could not check open orders: {e}")
         return False
+    
+def verify_positions_closed(fyers, original_positions):
+    """Verify that all original positions have been closed"""
+    try:
+        time.sleep(1)
+        positions_response = fyers.positions()
+        current_positions = positions_response.get("netPositions", []) if positions_response else []
+        
+        # Create a map of original positions
+        original_map = {}
+        for p in original_positions:
+            if (p.get("segment") in ["NFO", 11] and 
+                p.get("qty", 0) != 0 and 
+                abs(int(p.get("qty", 0))) > 0):
+                original_map[p["symbol"]] = abs(int(p.get("qty", 0)))
+        
+        # Check if any original positions still exist
+        for pos in current_positions:
+            if (pos.get("segment") in ["NFO", 11] and 
+                pos.get("symbol") in original_map and 
+                abs(int(pos.get("qty", 0))) > 0):
+                logging.warning(f"Position still open: {pos['symbol']} - Qty: {pos['qty']}")
+                return False
+        
+        return True
+    except Exception as e:
+        logging.error(f"Error verifying positions: {e}")
+        return False
+    
+def cancel_order(fyers, order_id):
+    """Cancel an order with proper error handling"""
+    try:
+        response = fyers.cancel_order(order_id)
+        if response and response.get("s") == "ok":
+            logging.info(f"Successfully cancelled order: {order_id}")
+            return True
+        else:
+            logging.error(f"Failed to cancel order {order_id}: {response}")
+            return False
+    except Exception as e:
+        logging.error(f"Exception cancelling order {order_id}: {e}")
+        return False
+def place_order_and_check(fyers, order):
+    """
+    Place an order and check its status
+    Returns: (order_id, status) or (None, None) if failed
+    """
+    try:
+        response = fyers.place_order(order)
+        if response and response.get("s") == "ok":
+            order_id = response.get("id")
+            logging.info(f"Order placed successfully: {order_id} for {order['symbol']}")
+            
+            # Check order status after a short delay
+            time.sleep(0.5)
+            orderbook_response = fyers.orderbook()
+            if orderbook_response:
+                orders = orderbook_response.get("orderBook", [])
+                for o in orders:
+                    if o.get("id") == order_id:
+                        return order_id, o.get("status")
+            
+            return order_id, None
+        else:
+            logging.error(f"Order placement failed: {response} for {order['symbol']}")
+            return None, None
+    except Exception as e:
+        logging.error(f"Exception placing order for {order['symbol']}: {e}")
+        return None, None
+##################################################
 
 # Paper trading with improved position tracking
 def handle_paper_trade(signal, sell_pe, buy_pe, sell_ce, buy_ce):
@@ -647,156 +737,331 @@ def update_position_prices(cid, token):
             position["current_price"] = ltp
 
 # Live trading with improved order handling
-def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers):
-    try:
-        orders = []
-        lot = Config.LOT_SIZE
-        current_signal = st.session_state.get("last_signal")
 
-        # Skip if signal is the same as last time
-        if current_signal == signal:
-            logging.info(f"Signal {signal} is already active. No new trades.")
+def handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers):
+    """
+    Handle basket orders atomically - always close existing positions before opening new ones
+    """
+    try:
+        current_signal = st.session_state.get("last_signal")
+        lot = Config.LOT_SIZE
+        placed_ids = []
+
+        # Skip if signal is the same as last time and orders are still open
+        if current_signal == signal and has_open_orders_for_last_signal(fyers):
+            logging.info(f"Signal {signal} is already active with open orders. No new trades.")
             return []
 
-        # Case 1: BUY → SELL (Exit BUY, Enter SELL)
+        # Get current positions and open orders
+        positions_response = fyers.positions()
+        positions = positions_response.get("netPositions", []) if positions_response else []
+        
+        orderbook_response = fyers.orderbook()
+        open_orders = orderbook_response.get("orderBook", []) if orderbook_response else []
+        
+        # Filter only active orders (status 4: Transit, 6: Pending, 7: Expired)
+        active_orders = [o for o in open_orders if o.get("status") in [4, 6, 7]]
+        
+        # Case 1: BUY → SELL (Exit BUY first, then Enter SELL)
         if current_signal == "BUY" and signal == "SELL":
             try:
-                positions = fyers.positions().get("netPositions", [])
+                # First, cancel any pending orders
+                for order in active_orders:
+                    if order.get("segment") in [11, "NFO"]:  # F&O segment
+                        cancel_response = fyers.cancel_order(order["id"])
+                        if cancel_response and cancel_response.get("s") == "ok":
+                            logging.info(f"Cancelled pending order: {order['id']}")
+                        time.sleep(0.1)  # Small delay between cancellations
+                
+                # Exit all existing positions
+                exit_orders = []
                 for p in positions:
-                    if p.get("segment") == "NFO" and p.get("qty") != 0:
-                        side = -1 if p["qty"] > 0 else 1
-                        orders.append({
+                    if (p.get("segment") in ["NFO", 11] and 
+                        p.get("qty") != 0 and 
+                        abs(int(p.get("qty", 0))) > 0):
+                        
+                        side = -1 if float(p.get("qty", 0)) > 0 else 1
+                        exit_orders.append({
                             "symbol": p["symbol"],
                             "qty": abs(int(p["qty"])),
-                            "type": 2,
+                            "type": 2,  # Market order
                             "side": side,
                             "productType": "MARGIN",
-                            "validity": "DAY"
+                            "validity": "DAY",
+                            "offlineOrder": "False"
                         })
-                logging.info("[LIVE] Exiting BUY positions for SELL signal")
+                
+                # Execute exit orders first
+                if exit_orders:
+                    logging.info(f"[LIVE] Exiting {len(exit_orders)} BUY positions for SELL signal")
+                    for order in exit_orders:
+                        oid, status = place_order_and_check(fyers, order)
+                        if oid is None or status in [1, 5]:  # Canceled or Rejected
+                            logging.error(f"Exit order failed: {order['symbol']}")
+                            # Cancel any successful exit orders if one fails
+                            for pid in placed_ids:
+                                cancel_order(fyers, pid)
+                            return []
+                        placed_ids.append(oid)
+                
+                # Wait for exits to process and verify
+                time.sleep(2)
+                if not verify_positions_closed(fyers, positions):
+                    logging.error("Failed to verify position closure")
+                    for pid in placed_ids:
+                        cancel_order(fyers, pid)
+                    return []
+                
+                # Then enter new SELL positions
+                if buy_ce and sell_ce:
+                    entry_orders = [
+                        {
+                            "symbol": buy_ce["symbol"], 
+                            "qty": lot, 
+                            "type": 2, 
+                            "side": 1,
+                            "productType": "MARGIN",
+                            "validity": "DAY",
+                            "offlineOrder": "False"
+                        },
+                        {
+                            "symbol": sell_ce["symbol"], 
+                            "qty": lot, 
+                            "type": 2, 
+                            "side": -1,
+                            "productType": "MARGIN",
+                            "validity": "DAY",
+                            "offlineOrder": "False"
+                        }
+                    ]
+                    
+                    for order in entry_orders:
+                        oid, status = place_order_and_check(fyers, order)
+                        if oid is None or status in [1, 5]:
+                            logging.error(f"Entry order failed: {order['symbol']}")
+                            # Cancel any successful entry orders
+                            for pid in placed_ids:
+                                cancel_order(fyers, pid)
+                            return []
+                        placed_ids.append(oid)
+
             except Exception as e:
-                logging.error(f"Failed to exit positions: {e}", exc_info=True)
+                logging.error(f"Failed in BUY→SELL transition: {e}", exc_info=True)
                 return []
 
-            if buy_ce and sell_ce:
-                orders.append({
-                    "symbol": buy_ce["symbol"], 
-                    "qty": lot, 
-                    "type": 2, 
-                    "side": 1,
-                    "productType": "MARGIN",
-                    "validity": "DAY"
-                })
-                orders.append({
-                    "symbol": sell_ce["symbol"], 
-                    "qty": lot, 
-                    "type": 2, 
-                    "side": -1,
-                    "productType": "MARGIN",
-                    "validity": "DAY"
-                })
-
-        # Case 2: SELL → BUY (Exit SELL, Enter BUY)
+        # Case 2: SELL → BUY (Exit SELL first, then Enter BUY)
         elif current_signal == "SELL" and signal == "BUY":
             try:
-                positions = fyers.positions().get("netPositions", [])
+                # Cancel pending orders first
+                for order in active_orders:
+                    if order.get("segment") in [11, "NFO"]:
+                        cancel_response = fyers.cancel_order(order["id"])
+                        if cancel_response and cancel_response.get("s") == "ok":
+                            logging.info(f"Cancelled pending order: {order['id']}")
+                        time.sleep(0.1)
+                
+                # Exit positions
+                exit_orders = []
                 for p in positions:
-                    if p.get("segment") == "NFO" and p.get("qty") != 0:
-                        side = -1 if p["qty"] > 0 else 1
-                        orders.append({
+                    if (p.get("segment") in ["NFO", 11] and 
+                        p.get("qty") != 0 and 
+                        abs(int(p.get("qty", 0))) > 0):
+                        
+                        side = -1 if float(p.get("qty", 0)) > 0 else 1
+                        exit_orders.append({
                             "symbol": p["symbol"],
                             "qty": abs(int(p["qty"])),
                             "type": 2,
                             "side": side,
                             "productType": "MARGIN",
-                            "validity": "DAY"
+                            "validity": "DAY",
+                            "offlineOrder": "False"
                         })
-                logging.info("[LIVE] Exiting SELL positions for BUY signal")
-            except Exception as e:
-                logging.error(f"Failed to exit positions: {e}", exc_info=True)
-                return []
+                
+                if exit_orders:
+                    logging.info(f"[LIVE] Exiting {len(exit_orders)} SELL positions for BUY signal")
+                    for order in exit_orders:
+                        oid, status = place_order_and_check(fyers, order)
+                        if oid is None or status in [1, 5]:
+                            logging.error(f"Exit order failed: {order['symbol']}")
+                            for pid in placed_ids:
+                                cancel_order(fyers, pid)
+                            return []
+                        placed_ids.append(oid)
+                
+                time.sleep(2)
+                if not verify_positions_closed(fyers, positions):
+                    logging.error("Failed to verify position closure")
+                    for pid in placed_ids:
+                        cancel_order(fyers, pid)
+                    return []
+                
+                # Enter new positions
+                if buy_pe and sell_pe:
+                    entry_orders = [
+                        {
+                            "symbol": buy_pe["symbol"], 
+                            "qty": lot, 
+                            "type": 2, 
+                            "side": 1,
+                            "productType": "MARGIN",
+                            "validity": "DAY",
+                            "offlineOrder": "False"
+                        },
+                        {
+                            "symbol": sell_pe["symbol"], 
+                            "qty": lot, 
+                            "type": 2, 
+                            "side": -1,
+                            "productType": "MARGIN",
+                            "validity": "DAY",
+                            "offlineOrder": "False"
+                        }
+                    ]
+                    
+                    for order in entry_orders:
+                        oid, status = place_order_and_check(fyers, order)
+                        if oid is None or status in [1, 5]:
+                            logging.error(f"Entry order failed: {order['symbol']}")
+                            for pid in placed_ids:
+                                cancel_order(fyers, pid)
+                            return []
+                        placed_ids.append(oid)
 
-            if buy_pe and sell_pe:
-                orders.append({
-                    "symbol": buy_pe["symbol"], 
-                    "qty": lot, 
-                    "type": 2, 
-                    "side": 1,
-                    "productType": "MARGIN",
-                    "validity": "DAY"
-                })
-                orders.append({
-                    "symbol": sell_pe["symbol"], 
-                    "qty": lot, 
-                    "type": 2, 
-                    "side": -1,
-                    "productType": "MARGIN",
-                    "validity": "DAY"
-                })
+            except Exception as e:
+                logging.error(f"Failed in SELL→BUY transition: {e}", exc_info=True)
+                return []
 
         # Case 3: New signal (no existing position)
         elif current_signal is None and signal in ["BUY", "SELL"]:
-            if signal == "BUY" and buy_pe and sell_pe:
-                orders.append({
-                    "symbol": buy_pe["symbol"], 
-                    "qty": lot, 
-                    "type": 2, 
-                    "side": 1,
-                    "productType": "MARGIN",
-                    "validity": "DAY"
-                })
-                orders.append({
-                    "symbol": sell_pe["symbol"], 
-                    "qty": lot, 
-                    "type": 2, 
-                    "side": -1,
-                    "productType": "MARGIN",
-                    "validity": "DAY"
-                })
-            elif signal == "SELL" and buy_ce and sell_ce:
-                orders.append({
-                    "symbol": buy_ce["symbol"], 
-                    "qty": lot, 
-                    "type": 2, 
-                    "side": 1,
-                    "productType": "MARGIN",
-                    "validity": "DAY"
-                })
-                orders.append({
-                    "symbol": sell_ce["symbol"], 
-                    "qty": lot, 
-                    "type": 2, 
-                    "side": -1,
-                    "productType": "MARGIN",
-                    "validity": "DAY"
-                })
+            try:
+                # First cancel any pending orders (clean slate)
+                for order in active_orders:
+                    if order.get("segment") in [11, "NFO"]:
+                        cancel_response = fyers.cancel_order(order["id"])
+                        if cancel_response and cancel_response.get("s") == "ok":
+                            logging.info(f"Cancelled pending order: {order['id']}")
+                        time.sleep(0.1)
+                
+                # Check if there are any existing positions (shouldn't be, but safety check)
+                if positions:
+                    logging.warning(f"Found {len(positions)} existing positions for new signal. Closing first.")
+                    exit_orders = []
+                    for p in positions:
+                        if (p.get("segment") in ["NFO", 11] and 
+                            p.get("qty") != 0 and 
+                            abs(int(p.get("qty", 0))) > 0):
+                            
+                            side = -1 if float(p.get("qty", 0)) > 0 else 1
+                            exit_orders.append({
+                                "symbol": p["symbol"],
+                                "qty": abs(int(p["qty"])),
+                                "type": 2,
+                                "side": side,
+                                "productType": "MARGIN",
+                                "validity": "DAY",
+                                "offlineOrder": "False"
+                            })
+                    
+                    if exit_orders:
+                        logging.info(f"[LIVE] Closing {len(exit_orders)} unexpected positions for new signal")
+                        for order in exit_orders:
+                            oid, status = place_order_and_check(fyers, order)
+                            if oid is None or status in [1, 5]:
+                                logging.error(f"Cleanup order failed: {order['symbol']}")
+                                return []
+                            placed_ids.append(oid)
+                        
+                        time.sleep(2)
+                        if not verify_positions_closed(fyers, positions):
+                            logging.error("Failed to verify cleanup position closure")
+                            return []
+                
+                # Now place new orders
+                if signal == "BUY" and buy_pe and sell_pe:
+                    entry_orders = [
+                        {
+                            "symbol": buy_pe["symbol"], 
+                            "qty": lot, 
+                            "type": 2, 
+                            "side": 1,
+                            "productType": "MARGIN",
+                            "validity": "DAY",
+                            "offlineOrder": "False"
+                        },
+                        {
+                            "symbol": sell_pe["symbol"], 
+                            "qty": lot, 
+                            "type": 2, 
+                            "side": -1,
+                            "productType": "MARGIN",
+                            "validity": "DAY",
+                            "offlineOrder": "False"
+                        }
+                    ]
+                elif signal == "SELL" and buy_ce and sell_ce:
+                    entry_orders = [
+                        {
+                            "symbol": buy_ce["symbol"], 
+                            "qty": lot, 
+                            "type": 2, 
+                            "side": 1,
+                            "productType": "MARGIN",
+                            "validity": "DAY",
+                            "offlineOrder": "False"
+                        },
+                        {
+                            "symbol": sell_ce["symbol"], 
+                            "qty": lot, 
+                            "type": 2, 
+                            "side": -1,
+                            "productType": "MARGIN",
+                            "validity": "DAY",
+                            "offlineOrder": "False"
+                        }
+                    ]
+                else:
+                    logging.error(f"Invalid options provided for {signal} signal")
+                    return []
+                
+                for order in entry_orders:
+                    oid, status = place_order_and_check(fyers, order)
+                    if oid is None or status in [1, 5]:
+                        logging.error(f"New position order failed: {order['symbol']}")
+                        for pid in placed_ids:
+                            cancel_order(fyers, pid)
+                        return []
+                    placed_ids.append(oid)
+                    
+            except Exception as e:
+                logging.error(f"Failed in new signal placement: {e}", exc_info=True)
+                return []
 
         # Case 4: SIDEWAYS (do nothing)
         elif signal == "SIDEWAYS":
             logging.info("[LIVE] SIDEWAYS: Holding positions")
             return []
 
-        # Execute orders
-        placed_ids = []
-        for order in orders:
-            oid, status = place_order_and_check(fyers, order)
-            if oid is None or status in [1, 5]:
-                logging.error(f"Order failed: {order['symbol']}")
-                for pid in placed_ids:
-                    cancel_order(fyers, pid)
-                return []
-            placed_ids.append(oid)
+        # Case 5: Same signal but no open orders (re-entry)
+        elif current_signal == signal and not has_open_orders_for_last_signal(fyers):
+            logging.info(f"Signal {signal} is same but no open orders. Re-entering.")
+            # This would follow similar logic to Case 3
+            # For simplicity, we'll just log and return
+            logging.info("Re-entry logic not implemented. Holding current positions.")
+            return []
 
+        # Update session state with order IDs for tracking
         if placed_ids:
             st.session_state["last_signal"] = signal
-            logging.info(f"[LIVE] {signal} basket executed!")
+            st.session_state["live_last_signal_order_ids"] = placed_ids
+            logging.info(f"[LIVE] {signal} basket executed successfully! Order IDs: {placed_ids}")
         
         return placed_ids
 
     except Exception as e:
         logging.error(f"Error in handle_basket_orders_atomic: {str(e)}", exc_info=True)
         return []
-
+    
 # Data display functions with improved formatting
 def format_and_show(chain, title, ltp, show_signals=False, fyers_api=None):
     df = pd.DataFrame(chain)
