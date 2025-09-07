@@ -317,15 +317,15 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
             signal = "SELL"
 
         # Print signal details
-        st.write(f"\n📊 {range_type}")
-        st.write(f"📊 Range: {lower_bound:.2f} to {upper_bound:.2f}")
-        st.write(f"📊 ITM CE Strikes: {list(itm_ce_strikes)}")
-        st.write(f"📊 ITM PE Strikes: {list(itm_pe_strikes)}")
-        st.write(f"📊 Net Money Flow: {net_flow:.2f}")
-        st.write(
-            f"📊 Direction Ratio: {direction_ratio:.2f} | CE Above ATP: {ce_above_atp} | PE Above ATP: {pe_above_atp} | Total Strikes: {len(itm_ce_strikes) + len(itm_pe_strikes)}")
-        st.write(
-            f"📊 Avg CE % below High: {ce_high_pct_avg:.2%} | Avg PE % below High: {pe_high_pct_avg:.2%} | Strength: {strength:.2f}")
+        # st.write(f"\n📊 {range_type}")
+        # st.write(f"📊 Range: {lower_bound:.2f} to {upper_bound:.2f}")
+        # st.write(f"📊 ITM CE Strikes: {list(itm_ce_strikes)}")
+        # st.write(f"📊 ITM PE Strikes: {list(itm_pe_strikes)}")
+        # st.write(f"📊 Net Money Flow: {net_flow:.2f}")
+        # st.write(
+        #     f"📊 Direction Ratio: {direction_ratio:.2f} | CE Above ATP: {ce_above_atp} | PE Above ATP: {pe_above_atp} | Total Strikes: {len(itm_ce_strikes) + len(itm_pe_strikes)}")
+        # st.write(
+        #     f"📊 Avg CE % below High: {ce_high_pct_avg:.2%} | Avg PE % below High: {pe_high_pct_avg:.2%} | Strength: {strength:.2f}")
 
         return signal
 
