@@ -219,8 +219,7 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
 
         # 2. Fill missing values
         merged_df = merged_df.fillna(0)
-        merged_df["CE_moneyflow"] = merged_df["CE_ltp"] * merged_df["CE_Vol"]
-        merged_df["PE_moneyflow"] = merged_df["PE_ltp"] * merged_df["PE_Vol"]
+
 
         range_df = merged_df[merged_df["Strike"].isin(range_strikes)].copy()
 
@@ -266,6 +265,8 @@ def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1
                             range_df.at[idx, 'PE_high'] = high_price
                             range_df.at[idx, 'PE_high_diff'] = high_price - ltp
                         range_df.at[idx, 'PE_ltp'] = ltp
+                merged_df["CE_moneyflow"] = merged_df["CE_ltp"] * merged_df["CE_Vol"]
+                merged_df["PE_moneyflow"] = merged_df["PE_ltp"] * merged_df["PE_Vol"]
 
             except Exception as e:
                 logging.warning(f"Fyers quotes error: {str(e)}")
