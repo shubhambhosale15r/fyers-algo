@@ -13,7 +13,7 @@ import subprocess
 import sys
 import json
 from typing import Dict, List, Any, Optional, Tuple
-
+from collections import Counter
 
 # Constants
 class Config:
@@ -47,7 +47,7 @@ def handle_errors(func):
                 if retries < Config.MAX_RETRIES:
                     time.sleep(Config.RETRY_DELAY)
                 else:
-                    print(f"❌ Operation failed after {Config.MAX_RETRIES} attempts: {str(e)}")
+                    st.write(f"❌ Operation failed after {Config.MAX_RETRIES} attempts: {str(e)}")
                     return None
 
     return wrapper
@@ -168,171 +168,382 @@ def get_symbol_ltp(session_state, cid, token, symbol):
 
 
 # Signal computation with improved error handling
-def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1, fyers_api=None):
+# def compute_signals(merged_df, atm_strike, ltp, min_range_pct=1, tolerance_pct=1, fyers_api=None):
+#     """
+#     Compute intraday trading signals using ITM options only.
+#     Now using ATP (Average Traded Price) instead of VWAP for comparison.
+#     Returns: (signal, net_flow, direction_ratio)
+#     """
+#     st.write(f"🔍 Computing signals for ATM strike: {atm_strike}, LTP: {ltp}")
+#     try:
+#         def safe_val(series, default=0):
+#             """Safe extraction from series."""
+#             return series.iloc[0] if not series.empty and not pd.isna(series.iloc[0]) else default
+
+#         # 1. Determine price range around ATM
+#         atm_row = merged_df[merged_df["Strike"] == atm_strike]
+#         atm_ce_price = safe_val(atm_row["CE_ltp"])
+#         atm_pe_price = safe_val(atm_row["PE_ltp"])
+#         atm_ce_volume = safe_val(atm_row["CE_Vol"])
+#         atm_pe_volume = safe_val(atm_row["PE_Vol"])
+#         atm_ce_moneyflow = atm_ce_price * atm_ce_volume
+#         atm_pe_moneyflow = atm_pe_price * atm_pe_volume
+#         price_range = atm_ce_price + atm_pe_price
+
+#         min_range_abs = ltp * (min_range_pct / 100)
+
+#         if price_range >= min_range_abs:
+#             lower_bound = atm_strike - price_range
+#             upper_bound = atm_strike + price_range
+#             range_type = f"ATM+CE Range (±{price_range:.2f} points)"
+#         else:
+#             lower_bound = ltp * (1 - min_range_pct / 100)
+#             upper_bound = ltp * (1 + min_range_pct / 100)
+#             range_type = f"{min_range_pct}% Underlying Range"
+
+#         def round_to_nearest_strike(value, strikes):
+#             """Round to the nearest available strike price"""
+#             if not strikes:
+#                 return value
+#             return min(strikes, key=lambda x: abs(x - value))
+
+#         strikes = sorted(merged_df["Strike"].dropna().unique())
+#         lower_bound = round_to_nearest_strike(lower_bound, strikes)
+#         upper_bound = round_to_nearest_strike(upper_bound, strikes)
+#         range_strikes = [s for s in strikes if lower_bound <= s <= upper_bound]
+
+#         if not range_strikes:
+#             logging.warning(f"No strikes in range {lower_bound:.2f}-{upper_bound:.2f}")
+#             st.warning(f"⚠️ No strikes in range {lower_bound:.2f}-{upper_bound:.2f}")
+#             return "SIDEWAYS"
+
+#         # 2. Fill missing values
+#         merged_df = merged_df.fillna(0)
+
+
+#         range_df = merged_df[merged_df["Strike"].isin(range_strikes)].copy()
+
+#         # 3. Fyers API quotes for ITM strikes - comparing LTP vs ATP
+#         if fyers_api and 'CE_symbol' in range_df.columns and 'PE_symbol' in range_df.columns:
+#             try:
+#                 symbols = list(set(range_df['CE_symbol'].tolist() + range_df['PE_symbol'].tolist()))
+#                 symbols = [s for s in symbols if s != 0 and isinstance(s, str)]
+#                 quotes = {}
+#                 for i in range(0, len(symbols), 50):
+#                     batch = symbols[i:i + 50]
+#                     response = fyers_api.quotes({"symbols": ",".join(batch)})
+#                     if response.get('code') == 200:
+#                         quotes.update({item['n']: item['v'] for item in response['d'] if item['s'] == 'ok'})
+
+#                 # Initialize default values
+#                 range_df['CE_vs_atp'] = 'BELOW'  # Default to BELOW if no data
+#                 range_df['PE_vs_atp'] = 'BELOW'
+#                 range_df['ce_strength'] = "LOW"
+#                 range_df['pe_strength'] = "LOW"
+
+#                 for idx, row in range_df.iterrows():
+#                     if row['CE_symbol'] in quotes:
+#                         ce_data = quotes[row['CE_symbol']]
+#                         ltp = ce_data.get('lp', 0)
+#                         atp = ce_data.get('atp', 0)
+#                         high_price = ce_data.get('high_price', 0)
+#                         if atp > 0:
+#                             range_df.at[idx, 'CE_vs_atp'] = 'ABOVE' if ltp > atp else 'BELOW'
+#                         if high_price > 0 and ltp > 0:
+#                             range_df.at[idx, 'CE_high'] = high_price
+#                             range_df.at[idx, 'CE_high_diff'] = high_price - ltp
+#                         range_df.at[idx, 'CE_ltp'] = ltp
+
+#                     if row['PE_symbol'] in quotes:
+#                         pe_data = quotes[row['PE_symbol']]
+#                         ltp = pe_data.get('lp', 0)
+#                         atp = pe_data.get('atp', 0)
+#                         high_price = pe_data.get('high_price', 0)
+#                         if atp > 0:
+#                             range_df.at[idx, 'PE_vs_atp'] = 'ABOVE' if ltp > atp else 'BELOW'
+#                         if high_price > 0 and ltp > 0:
+#                             range_df.at[idx, 'PE_high'] = high_price
+#                             range_df.at[idx, 'PE_high_diff'] = high_price - ltp
+#                         range_df.at[idx, 'PE_ltp'] = ltp
+#                 merged_df["CE_moneyflow"] = merged_df["CE_ltp"] * merged_df["CE_Vol"]
+#                 merged_df["PE_moneyflow"] = merged_df["PE_ltp"] * merged_df["PE_Vol"]
+
+#             except Exception as e:
+#                 logging.warning(f"Fyers quotes error: {str(e)}")
+#                 st.warning(f"⚠️ Fyers quotes error: {str(e)}")
+
+#         # 4. Select ITM strikes
+#         atm_idx = range_strikes.index(atm_strike) if atm_strike in range_strikes else len(range_strikes) // 2
+#         num_strikes = min(len(range_strikes[:atm_idx]), len(range_strikes[atm_idx + 1:]))
+#         itm_ce_strikes = range_strikes[atm_idx - num_strikes:atm_idx]
+#         itm_pe_strikes = range_strikes[atm_idx + 1:atm_idx + 1 + num_strikes]
+
+#         # 5. Calculate money flow and direction ratio (using ATP comparison)
+#         ce_net = range_df[range_df["Strike"].isin(itm_ce_strikes)]["CE_moneyflow"].sum()
+#         pe_net = range_df[range_df["Strike"].isin(itm_pe_strikes)]["PE_moneyflow"].sum()
+
+
+#         net_flow = (ce_net - pe_net) / (ce_net + pe_net) if (ce_net + pe_net) != 0 else 0
+
+#         ce_above_atp = range_df[range_df["Strike"].isin(itm_ce_strikes) & (range_df["CE_vs_atp"] == 'ABOVE')].shape[0]
+#         pe_above_atp = range_df[range_df["Strike"].isin(itm_pe_strikes) & (range_df["PE_vs_atp"] == 'ABOVE')].shape[0]
+
+#         direction_ratio = (ce_above_atp - pe_above_atp) / max(len(itm_ce_strikes) + len(itm_pe_strikes), 1)
+
+#         # 6. Convert absolute high diff → % diff from high
+#         range_df["CE_high_pct"] = np.where(
+#             range_df["CE_high"] > 0,
+#             range_df["CE_high_diff"] / range_df["CE_high"],
+#             0
+#         )
+#         range_df["PE_high_pct"] = np.where(
+#             range_df["PE_high"] > 0,
+#             range_df["PE_high_diff"] / range_df["PE_high"],
+#             0
+#         )
+
+#         ce_high_pct_avg = range_df[range_df["Strike"].isin(itm_ce_strikes)]["CE_high_pct"].mean()
+#         pe_high_pct_avg = range_df[range_df["Strike"].isin(itm_pe_strikes)]["PE_high_pct"].mean()
+
+#         # Strength metric: -1 (PE stronger) → +1 (CE stronger)
+#         strength = (ce_high_pct_avg - pe_high_pct_avg) / max(ce_high_pct_avg + pe_high_pct_avg, 1e-6)
+
+#         # 7. Generate signal
+#         signal = "SIDEWAYS"
+#         if direction_ratio >= 0.5 and strength < -0.2:      #0.2 mean 50% more    0.3 mean 100% more
+#             st.write("📈 Market is in BUY entry found entering the trade")
+#             signal = "BUY"
+#         elif direction_ratio <= -0.5 and strength > 0.2:
+#             st.write("📉 Market is in SELL entry found entering the trade")
+#             signal = "SELL"
+
+#         # Print signal details
+#         st.write(f"\n📊 {range_type}")
+#         st.write(f"📊 Range: {lower_bound:.2f} to {upper_bound:.2f}")
+#         st.write(f"📊 ITM CE Strikes: {list(itm_ce_strikes)}")
+#         st.write(f"📊 ITM PE Strikes: {list(itm_pe_strikes)}")
+#         st.write(f"📊 Net Money Flow: {net_flow:.2f}")
+#         st.write(
+#             f"📊 Direction Ratio: {direction_ratio:.2f} | CE Above ATP: {ce_above_atp} | PE Above ATP: {pe_above_atp} | Total Strikes: {len(itm_ce_strikes) + len(itm_pe_strikes)}")
+#         st.write(
+#             f"📊 Avg CE % below High: {ce_high_pct_avg:.2%} | Avg PE % below High: {pe_high_pct_avg:.2%} | Strength: {strength:.2f}")
+
+#         return signal
+
+#     except Exception as e:
+#         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
+#         st.error(f"❌ Error in compute_signals: {str(e)}")
+#         return "SIDEWAYS"
+
+
+# ----------------------------
+# Global rolling signal buffer
+# ----------------------------
+signal_history = []
+
+MAX_HISTORY = 3  # Last 3 signals
+MAJORITY_THRESHOLD = 3  # Majority count to consider
+
+def majority_signal(history, threshold=MAJORITY_THRESHOLD):
+    """
+    Determine majority signal from the history.
+    Returns the majority signal if count >= threshold, else SIDEWAYS.
+    """
+    if not history:
+        return "SIDEWAYS"
+    counter = Counter(history)
+    most_common_signal, count = counter.most_common(1)[0]
+    if count >= threshold:
+        return most_common_signal
+    return "SIDEWAYS"
+
+def compute_signals(
+    merged_df,
+    atm_strike,
+    ltp,
+    min_range_pct: float = 1.0,
+    tolerance_pct: float = 1.0,
+    fyers_api=None,
+):
     """
     Compute intraday trading signals using ITM options only.
-    Now using ATP (Average Traded Price) instead of VWAP for comparison.
-    Returns: (signal, net_flow, direction_ratio)
+    Returns: "BUY", "SELL", or "SIDEWAYS" based on rolling majority.
     """
-    st.write(f"🔍 Computing signals for ATM strike: {atm_strike}, LTP: {ltp}")
-    try:
-        def safe_val(series, default=0):
-            """Safe extraction from series."""
-            return series.iloc[0] if not series.empty and not pd.isna(series.iloc[0]) else default
+    st.write(f"🔍 [DEBUG] Computing signals for ATM strike: {atm_strike}, LTP: {ltp}")
 
-        # 1. Determine price range around ATM
+    try:
+        # ----------------------------
+        # Helper
+        # ----------------------------
+        def safe_val(series, default=0.0):
+            return float(series.iloc[0]) if not series.empty and not pd.isna(series.iloc[0]) else float(default)
+
+        # ----------------------------
+        # 1. Price range around ATM
+        # ----------------------------
         atm_row = merged_df[merged_df["Strike"] == atm_strike]
         atm_ce_price = safe_val(atm_row["CE_ltp"])
         atm_pe_price = safe_val(atm_row["PE_ltp"])
-        atm_ce_volume = safe_val(atm_row["CE_Vol"])
-        atm_pe_volume = safe_val(atm_row["PE_Vol"])
-        atm_ce_moneyflow = atm_ce_price * atm_ce_volume
-        atm_pe_moneyflow = atm_pe_price * atm_pe_volume
-        price_range = atm_ce_price + atm_pe_price
 
-        min_range_abs = ltp * (min_range_pct / 100)
+        price_range = atm_ce_price + atm_pe_price
+        min_range_abs = float(ltp) * (min_range_pct / 100.0)
 
         if price_range >= min_range_abs:
             lower_bound = atm_strike - price_range
             upper_bound = atm_strike + price_range
             range_type = f"ATM+CE Range (±{price_range:.2f} points)"
         else:
-            lower_bound = ltp * (1 - min_range_pct / 100)
-            upper_bound = ltp * (1 + min_range_pct / 100)
+            lower_bound = ltp * (1 - min_range_pct / 100.0)
+            upper_bound = ltp * (1 + min_range_pct / 100.0)
             range_type = f"{min_range_pct}% Underlying Range"
 
+        strikes = sorted(merged_df["Strike"].dropna().unique())
+
         def round_to_nearest_strike(value, strikes):
-            """Round to the nearest available strike price"""
             if not strikes:
                 return value
             return min(strikes, key=lambda x: abs(x - value))
 
-        strikes = sorted(merged_df["Strike"].dropna().unique())
         lower_bound = round_to_nearest_strike(lower_bound, strikes)
         upper_bound = round_to_nearest_strike(upper_bound, strikes)
+
         range_strikes = [s for s in strikes if lower_bound <= s <= upper_bound]
-
         if not range_strikes:
-            logging.warning(f"No strikes in range {lower_bound:.2f}-{upper_bound:.2f}")
-            st.warning(f"⚠️ No strikes in range {lower_bound:.2f}-{upper_bound:.2f}")
+            st.write(f"⚠️ [DEBUG] No strikes in range {lower_bound:.2f}-{upper_bound:.2f}")
             return "SIDEWAYS"
-
-        # 2. Fill missing values
-        merged_df = merged_df.fillna(0)
-
 
         range_df = merged_df[merged_df["Strike"].isin(range_strikes)].copy()
 
-        # 3. Fyers API quotes for ITM strikes - comparing LTP vs ATP
-        if fyers_api and 'CE_symbol' in range_df.columns and 'PE_symbol' in range_df.columns:
+        # ----------------------------
+        # 2. Update with Fyers quotes
+        # ----------------------------
+        if fyers_api and {"CE_symbol", "PE_symbol"} <= set(range_df.columns):
             try:
-                symbols = list(set(range_df['CE_symbol'].tolist() + range_df['PE_symbol'].tolist()))
-                symbols = [s for s in symbols if s != 0 and isinstance(s, str)]
+                symbols = list(set(range_df["CE_symbol"].dropna().tolist() + range_df["PE_symbol"].dropna().tolist()))
+                symbols = [s for s in symbols if isinstance(s, str) and s.strip()]
                 quotes = {}
+
                 for i in range(0, len(symbols), 50):
                     batch = symbols[i:i + 50]
                     response = fyers_api.quotes({"symbols": ",".join(batch)})
-                    if response.get('code') == 200:
-                        quotes.update({item['n']: item['v'] for item in response['d'] if item['s'] == 'ok'})
+                    if response.get("code") == 200:
+                        quotes.update({item["n"]: item["v"] for item in response["d"] if item["s"] == "ok"})
 
-                # Initialize default values
-                range_df['CE_vs_atp'] = 'BELOW'  # Default to BELOW if no data
-                range_df['PE_vs_atp'] = 'BELOW'
-                range_df['ce_strength'] = "LOW"
-                range_df['pe_strength'] = "LOW"
+                range_df["CE_vs_atp"] = "BELOW"
+                range_df["PE_vs_atp"] = "BELOW"
 
                 for idx, row in range_df.iterrows():
-                    if row['CE_symbol'] in quotes:
-                        ce_data = quotes[row['CE_symbol']]
-                        ltp = ce_data.get('lp', 0)
-                        atp = ce_data.get('atp', 0)
-                        high_price = ce_data.get('high_price', 0)
+                    if row["CE_symbol"] in quotes:
+                        ce_data = quotes[row["CE_symbol"]]
+                        ce_ltp = float(ce_data.get("lp", 0) or 0)
+                        atp = float(ce_data.get("atp", 0) or 0)
+                        ce_high = float(ce_data.get("high_price", 0) or 0)
+                        ce_low = float(ce_data.get("low_price", 0) or 0)
                         if atp > 0:
-                            range_df.at[idx, 'CE_vs_atp'] = 'ABOVE' if ltp > atp else 'BELOW'
-                        if high_price > 0 and ltp > 0:
-                            range_df.at[idx, 'CE_high'] = high_price
-                            range_df.at[idx, 'CE_high_diff'] = high_price - ltp
-                        range_df.at[idx, 'CE_ltp'] = ltp
+                            range_df.at[idx, "CE_vs_atp"] = "ABOVE" if ce_ltp > atp else "BELOW"
+                        range_df.at[idx, "CE_ltp"] = ce_ltp
+                        range_df.at[idx, "CE_high"] = ce_high
+                        range_df.at[idx, "CE_low"] = ce_low
 
-                    if row['PE_symbol'] in quotes:
-                        pe_data = quotes[row['PE_symbol']]
-                        ltp = pe_data.get('lp', 0)
-                        atp = pe_data.get('atp', 0)
-                        high_price = pe_data.get('high_price', 0)
+                    if row["PE_symbol"] in quotes:
+                        pe_data = quotes[row["PE_symbol"]]
+                        pe_ltp = float(pe_data.get("lp", 0) or 0)
+                        atp = float(pe_data.get("atp", 0) or 0)
+                        pe_high = float(pe_data.get("high_price", 0) or 0)
+                        pe_low = float(pe_data.get("low_price", 0) or 0)
                         if atp > 0:
-                            range_df.at[idx, 'PE_vs_atp'] = 'ABOVE' if ltp > atp else 'BELOW'
-                        if high_price > 0 and ltp > 0:
-                            range_df.at[idx, 'PE_high'] = high_price
-                            range_df.at[idx, 'PE_high_diff'] = high_price - ltp
-                        range_df.at[idx, 'PE_ltp'] = ltp
-                merged_df["CE_moneyflow"] = merged_df["CE_ltp"] * merged_df["CE_Vol"]
-                merged_df["PE_moneyflow"] = merged_df["PE_ltp"] * merged_df["PE_Vol"]
+                            range_df.at[idx, "PE_vs_atp"] = "ABOVE" if pe_ltp > atp else "BELOW"
+                        range_df.at[idx, "PE_ltp"] = pe_ltp
+                        range_df.at[idx, "PE_high"] = pe_high
+                        range_df.at[idx, "PE_low"] = pe_low
+
+                range_df["CE_moneyflow"] = range_df["CE_ltp"].astype(float) * range_df["CE_Vol"].astype(float)
+                range_df["PE_moneyflow"] = range_df["PE_ltp"].astype(float) * range_df["PE_Vol"].astype(float)
 
             except Exception as e:
                 logging.warning(f"Fyers quotes error: {str(e)}")
-                st.warning(f"⚠️ Fyers quotes error: {str(e)}")
+                st.write(f"⚠️ [DEBUG] Fyers quotes error: {str(e)}")
 
-        # 4. Select ITM strikes
+        # ----------------------------
+        # 3. ITM Strikes selection
+        # ----------------------------
         atm_idx = range_strikes.index(atm_strike) if atm_strike in range_strikes else len(range_strikes) // 2
         num_strikes = min(len(range_strikes[:atm_idx]), len(range_strikes[atm_idx + 1:]))
         itm_ce_strikes = range_strikes[atm_idx - num_strikes:atm_idx]
         itm_pe_strikes = range_strikes[atm_idx + 1:atm_idx + 1 + num_strikes]
 
-        # 5. Calculate money flow and direction ratio (using ATP comparison)
+        # ----------------------------
+        # 4. Money flow & Direction
+        # ----------------------------
         ce_net = range_df[range_df["Strike"].isin(itm_ce_strikes)]["CE_moneyflow"].sum()
         pe_net = range_df[range_df["Strike"].isin(itm_pe_strikes)]["PE_moneyflow"].sum()
+        net_flow = (ce_net - pe_net) / (ce_net + pe_net) if (ce_net + pe_net) != 0 else 0.0
 
-
-        net_flow = (ce_net - pe_net) / (ce_net + pe_net) if (ce_net + pe_net) != 0 else 0
-
-        ce_above_atp = range_df[range_df["Strike"].isin(itm_ce_strikes) & (range_df["CE_vs_atp"] == 'ABOVE')].shape[0]
-        pe_above_atp = range_df[range_df["Strike"].isin(itm_pe_strikes) & (range_df["PE_vs_atp"] == 'ABOVE')].shape[0]
-
+        ce_above_atp = range_df[(range_df["Strike"].isin(itm_ce_strikes)) & (range_df["CE_vs_atp"] == "ABOVE")].shape[0]
+        pe_above_atp = range_df[(range_df["Strike"].isin(itm_pe_strikes)) & (range_df["PE_vs_atp"] == "ABOVE")].shape[0]
         direction_ratio = (ce_above_atp - pe_above_atp) / max(len(itm_ce_strikes) + len(itm_pe_strikes), 1)
 
-        # 6. Convert absolute high diff → % diff from high
-        range_df["CE_high_pct"] = np.where(
-            range_df["CE_high"] > 0,
-            range_df["CE_high_diff"] / range_df["CE_high"],
-            0
+        # ----------------------------
+        # 5. Range placement logic
+        # ----------------------------
+        range_df["CE_range_placement"] = np.where(
+            (range_df["CE_high"] - range_df["CE_low"]) > 0,
+            (range_df["CE_ltp"] - range_df["CE_low"]) / (range_df["CE_high"] - range_df["CE_low"]),
+            0,
         )
-        range_df["PE_high_pct"] = np.where(
-            range_df["PE_high"] > 0,
-            range_df["PE_high_diff"] / range_df["PE_high"],
-            0
+        range_df["PE_range_placement"] = np.where(
+            (range_df["PE_high"] - range_df["PE_low"]) > 0,
+            (range_df["PE_ltp"] - range_df["PE_low"]) / (range_df["PE_high"] - range_df["PE_low"]),
+            0,
         )
 
-        ce_high_pct_avg = range_df[range_df["Strike"].isin(itm_ce_strikes)]["CE_high_pct"].mean()
-        pe_high_pct_avg = range_df[range_df["Strike"].isin(itm_pe_strikes)]["PE_high_pct"].mean()
+        ce_placement_avg = range_df[range_df["Strike"].isin(itm_ce_strikes)]["CE_range_placement"].mean()
+        pe_placement_avg = range_df[range_df["Strike"].isin(itm_pe_strikes)]["PE_range_placement"].mean()
 
-        # Strength metric: -1 (PE stronger) → +1 (CE stronger)
-        strength = (ce_high_pct_avg - pe_high_pct_avg) / max(ce_high_pct_avg + pe_high_pct_avg, 1e-6)
+                # ----------------------------
+        # 4c. Placement thresholds
+        # ----------------------------
+        CE_HIGH_THRESHOLD = 0.6
+        CE_LOW_THRESHOLD = 0.4
+        PE_HIGH_THRESHOLD = 0.6
+        PE_LOW_THRESHOLD = 0.4
 
-        # 7. Generate signal
-        signal = "SIDEWAYS"
-        if direction_ratio >= 0.5 and strength < -0.2:      #0.2 mean 50% more    0.3 mean 100% more
-            st.write("📈 Market is in BUY entry found entering the trade")
-            signal = "BUY"
-        elif direction_ratio <= -0.5 and strength > 0.2:
-            st.write("📉 Market is in SELL entry found entering the trade")
-            signal = "SELL"
+        # ----------------------------
+        # 6. Signal generation (raw)
+        # ----------------------------
+        raw_signal = "SIDEWAYS"
+        if direction_ratio >= 0.5  and net_flow > 0.2 and ce_placement_avg > CE_HIGH_THRESHOLD and pe_placement_avg < PE_LOW_THRESHOLD:
+            raw_signal = "BUY"
+        elif direction_ratio <= -0.5 and net_flow < -0.2 and pe_placement_avg > PE_HIGH_THRESHOLD and ce_placement_avg < CE_LOW_THRESHOLD:
+            raw_signal = "SELL"
 
-        # Print signal details
-        st.write(f"\n📊 {range_type}")
-        st.write(f"📊 Range: {lower_bound:.2f} to {upper_bound:.2f}")
-        st.write(f"📊 ITM CE Strikes: {list(itm_ce_strikes)}")
-        st.write(f"📊 ITM PE Strikes: {list(itm_pe_strikes)}")
-        st.write(f"📊 Net Money Flow: {net_flow:.2f}")
-        st.write(
-            f"📊 Direction Ratio: {direction_ratio:.2f} | CE Above ATP: {ce_above_atp} | PE Above ATP: {pe_above_atp} | Total Strikes: {len(itm_ce_strikes) + len(itm_pe_strikes)}")
-        st.write(
-            f"📊 Avg CE % below High: {ce_high_pct_avg:.2%} | Avg PE % below High: {pe_high_pct_avg:.2%} | Strength: {strength:.2f}")
+        # ----------------------------
+        # 7. Update rolling buffer and get majority
+        # ----------------------------
+        global signal_history
+        signal_history.append(raw_signal)
+        
+        if len(signal_history) > MAX_HISTORY:
+            signal_history.pop(0)
+        st.write(f"📊 [DEBUG] Signal History: {signal_history}")
+        final_signal = majority_signal(signal_history)
 
-        return signal
+        # ----------------------------
+        # 8. Debug Summary
+        # ----------------------------
+        st.write(f"\n📊 [DEBUG] {range_type}")
+        st.write(f"📊 [DEBUG] ITM CE Strikes: {list(itm_ce_strikes)}")
+        st.write(f"📊 [DEBUG] ITM PE Strikes: {list(itm_pe_strikes)}")
+        st.write(f"📊 [DEBUG] ce_net: {ce_net}, pe_net: {pe_net}")
+        st.write(f"📊 [DEBUG] CE Above ATP: {ce_above_atp}, PE Above ATP: {pe_above_atp}, total: {len(itm_ce_strikes) + len(itm_pe_strikes)}")
+        st.write(f"📊 [DEBUG] Net Flow: {net_flow:.2f}, Direction Ratio: {direction_ratio:.2f}, CE Placement Strength: {ce_placement_avg:.2f}, PE Placement Strength: {pe_placement_avg:.2f}")
+        st.write(f"📊 [DEBUG] Raw Signal: {raw_signal}, Majority Signal: {final_signal}")
+
+        return final_signal
 
     except Exception as e:
         logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
-        st.error(f"❌ Error in compute_signals: {str(e)}")
+        st.write(f"❌ [DEBUG] Error in compute_signals: {str(e)}")
         return "SIDEWAYS"
 
 
