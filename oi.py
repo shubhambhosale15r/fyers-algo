@@ -154,12 +154,12 @@ def compute_signals(merged_df, atm_strike, ltp):
         required_columns = ["Strike", "CE_ltp", "PE_ltp", "CE_OI", "PE_OI"]
         for col in required_columns:
             if col not in merged_df.columns:
-                logging.error(f"Missing required column: {col}")
+                st.error(f"Missing required column: {col}")
                 return "SIDEWAYS", "Error", "Error", "Error"
 
         strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
         if atm_strike not in strikes:
-            logging.error(f"ATM Strike {atm_strike} not found in strikes: {strikes}")
+            st.error(f"ATM Strike {atm_strike} not found in strikes: {strikes}")
             return "SIDEWAYS", "Error", "Error", "Error"
 
         # --- 1. PCR per strike ---
@@ -167,7 +167,7 @@ def compute_signals(merged_df, atm_strike, ltp):
             lambda row: row["PE_OI"] / row["CE_OI"] if row["CE_OI"] > 0 else 0, axis=1
         )
 
-        # --- 2. Find immediate support/resistance relative to ATM ---
+        # --- 2. Immediate support/resistance relative to ATM ---
         support_candidates = merged_df.loc[
             (merged_df["Strike"] < atm_strike) & (merged_df["PCR_strike"] > 1.5), "Strike"
         ].tolist()
@@ -180,29 +180,37 @@ def compute_signals(merged_df, atm_strike, ltp):
 
         # --- 3. Range Index ---
         if resistance != support:
-            range_index = (ltp - support) / (resistance - support)
+            range_val = resistance - support
+            range_index = (ltp - support) / range_val
         else:
+            range_val = 1
             range_index = 0.5  # neutral fallback
 
-        # --- 4. Overall PCR bias ---
+        # --- 4. PCR bias ---
         total_pe_oi = merged_df["PE_OI"].sum()
         total_ce_oi = merged_df["CE_OI"].sum()
         pcr = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0.0
 
-        # --- 5. Signal logic ---
-        if pcr > 1 and range_index > 0.6:
+        # --- 5. Threshold prices for 0.4 and 0.6 levels ---
+        bearish_price = support + 0.382 * range_val
+        bullish_price = support + 0.618 * range_val
+
+        # --- 6. Signal logic ---
+        if pcr > 1 and range_index > 0.618:
             signal = "BUY"
-        elif pcr < 1 and range_index < 0.4:
+        elif pcr < 1 and range_index < 0.382:
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
 
+        # --- 7. Display info ---
         st.info(
             f"Signal: {signal} | PCR: {pcr:.2f} | RangeIdx: {range_index:.2f} "
-            f"| Support: {support} | Resistance: {resistance}"
+            f"| Support: {support} | Resistance: {resistance} "
+            f"| Bearish< {bearish_price:.2f} | Bullish> {bullish_price:.2f}"
         )
 
-        return signal, range_index, pcr, (support, resistance)
+        return signal, range_index, pcr, (support, resistance, bearish_price, bullish_price)
 
     except Exception as e:
         st.error(f"Error in compute_signals: {str(e)}", exc_info=True)
