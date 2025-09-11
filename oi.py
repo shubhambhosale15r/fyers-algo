@@ -151,89 +151,63 @@ def get_symbol_ltp(cid, token, symbol):
 # Signal computation with improved logging
 def compute_signals(merged_df, atm_strike, ltp):
     try:
-        # Ensure required columns exist
-        required_columns = [
-            "Strike", "CE_ltp", "PE_ltp", "CE_OI", "PE_OI"
-        ]
+        required_columns = ["Strike", "CE_ltp", "PE_ltp", "CE_OI", "PE_OI"]
         for col in required_columns:
             if col not in merged_df.columns:
                 logging.error(f"Missing required column: {col}")
-                return "SIDEWAYS", "Error", "Error"
+                return "SIDEWAYS", "Error", "Error", "Error"
 
-        # Prepare strikes list
         strikes = sorted(merged_df["Strike"].dropna().unique().tolist())
         if atm_strike not in strikes:
             logging.error(f"ATM Strike {atm_strike} not found in strikes: {strikes}")
-            return "SIDEWAYS", "Error", "Error"
+            return "SIDEWAYS", "Error", "Error", "Error"
 
-        idx = strikes.index(atm_strike)
+        # --- 1. PCR per strike ---
+        merged_df["PCR_strike"] = merged_df.apply(
+            lambda row: row["PE_OI"] / row["CE_OI"] if row["CE_OI"] > 0 else 0, axis=1
+        )
 
-        # Filter ATM row
-        atm_row = merged_df[merged_df["Strike"] == atm_strike]
-        atm_ce_price = atm_row["CE_ltp"].values[0] if not atm_row.empty else 0.0
-        atm_pe_price = atm_row["PE_ltp"].values[0] if not atm_row.empty else 0.0
+        # --- 2. Find immediate support/resistance relative to ATM ---
+        support_candidates = merged_df.loc[
+            (merged_df["Strike"] < atm_strike) & (merged_df["PCR_strike"] > 1.5), "Strike"
+        ].tolist()
+        support = max(support_candidates) if support_candidates else min(strikes)
 
-        # Identify ITM/OTM strikes
-        ce_itm_strikes = strikes[max(0, idx - 10):idx] if idx >= 1 else []
-        pe_itm_strikes = strikes[idx + 1:min(len(strikes), idx + 11)] if idx < len(strikes) - 1 else []
-        # st.write(f"ITM Strikes: CE {ce_itm_strikes} | PE{pe_itm_strikes}")
-        ce_otm_strikes = strikes[idx + 1:min(len(strikes), idx + 11)] if idx < len(strikes) - 1 else []
-        pe_otm_strikes = strikes[max(0, idx - 10):idx] if idx >= 1 else []
+        resistance_candidates = merged_df.loc[
+            (merged_df["Strike"] > atm_strike) & (merged_df["PCR_strike"] < 0.5), "Strike"
+        ].tolist()
+        resistance = min(resistance_candidates) if resistance_candidates else max(strikes)
 
-        # Helper to sum column values with .fillna(0)
-        def sum_column(strikes_list, col_name):
-            return merged_df[merged_df["Strike"].isin(strikes_list)][col_name].fillna(0).sum()
+        # --- 3. Range Index ---
+        if resistance != support:
+            range_index = (ltp - support) / (resistance - support)
+        else:
+            range_index = 0.5  # neutral fallback
 
-        # Prices
-        itm_pe_vol = sum_column(pe_itm_strikes, "PE_Vol")
-        itm_ce_vol = sum_column(ce_itm_strikes, "CE_Vol")
-        otm_pe_vol = sum_column(pe_otm_strikes, "PE_Vol")
-        otm_ce_vol = sum_column(ce_otm_strikes, "CE_Vol")
+        # --- 4. Overall PCR bias ---
+        total_pe_oi = merged_df["PE_OI"].sum()
+        total_ce_oi = merged_df["CE_OI"].sum()
+        pcr = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0.0
 
-        # OI changes
-        itm_pe_oi = sum_column(pe_itm_strikes, "PE_OI")
-        itm_ce_oi = sum_column(ce_itm_strikes, "CE_OI")
-        otm_pe_oi = sum_column(pe_otm_strikes, "PE_OI")
-        otm_ce_oi = sum_column(ce_otm_strikes, "CE_OI")
-
-
-        # Add ATM contribution
-        if not atm_row.empty:
-            atm_ce_Vol = atm_row["CE_Vol"].values[0]
-            atm_pe_Vol = atm_row["PE_Vol"].values[0]
-            atm_ce_oi = atm_row["CE_OI"].values[0]
-            atm_pe_oi = atm_row["PE_OI"].values[0]
-
-            # Handle NaNs
-            atm_ce_Vol = 0.0 if pd.isna(atm_ce_Vol) else atm_ce_Vol
-            atm_pe_Vol = 0.0 if pd.isna(atm_pe_Vol) else atm_pe_Vol
-            atm_ce_oi = 0.0 if pd.isna(atm_ce_oi) else atm_ce_oi
-            atm_pe_oi = 0.0 if pd.isna(atm_pe_oi) else atm_pe_oi
-
-        # Computation part
-        pcr = (itm_pe_oi + otm_pe_oi + atm_pe_oi) / (itm_ce_oi + otm_ce_oi + atm_ce_oi) if (itm_ce_oi + otm_ce_oi + atm_ce_oi) > 0 else 0.0
-
-        ce_activity = (itm_ce_vol + otm_ce_vol + atm_ce_Vol) / (itm_ce_oi + otm_ce_oi + atm_ce_oi) if (itm_ce_oi + otm_ce_oi + atm_ce_oi) > 0 else 0.0
-        pe_activity = (itm_pe_vol + otm_pe_vol + atm_pe_Vol) / (itm_pe_oi + otm_pe_oi + atm_pe_oi) if (itm_pe_oi + otm_pe_oi + atm_pe_oi) > 0 else 0.0
-    
-
-        # Default signal
-        if pcr > 1.1 and ce_activity > pe_activity:
+        # --- 5. Signal logic ---
+        if pcr > 1 and range_index > 0.6:
             signal = "BUY"
-        elif pcr < 0.9 and pe_activity > ce_activity:
+        elif pcr < 1 and range_index < 0.4:
             signal = "SELL"
-        else :
+        else:
             signal = "SIDEWAYS"
 
-        # Logging for debug
-        logging.info(f"Computed Signal: {signal} | CE Activity: {ce_activity:.2f} | PE Activity: {pe_activity:.2f} | PCR: {pcr:.2f}")
+        st.info(
+            f"Signal: {signal} | PCR: {pcr:.2f} | RangeIdx: {range_index:.2f} "
+            f"| Support: {support} | Resistance: {resistance}"
+        )
 
-        return signal, ce_activity, pe_activity, pcr
+        return signal, range_index, pcr, (support, resistance)
 
     except Exception as e:
-        logging.error(f"Error in compute_signals: {str(e)}", exc_info=True)
-        return "SIDEWAYS", "Error", "Error","Error"
-    
+        st.error(f"Error in compute_signals: {str(e)}", exc_info=True)
+        return "SIDEWAYS", "Error", "Error", "Error"
+
     
 # Optimized strike selection
 def select_strikes_atm_half_price(chain, atm_strike):
@@ -747,10 +721,10 @@ def format_and_show(chain, title, ltp, show_signals=False):
 
     signal,ce_activity,pe_activity,pcr = compute_signals(merged, atm, ltp)
 
-    st.write("Signal: ", signal)
-    st.write("CE Activity: ", ce_activity)
-    st.write("PE Activity: ", pe_activity)
-    st.write("PCR: ", pcr)
+    # st.write("Signal: ", signal)
+    # st.write("CE Activity: ", ce_activity)
+    # st.write("PE Activity: ", pe_activity)
+    # st.write("PCR: ", pcr)
 
 
     st.caption(f"ATM Strike: {atm} | Underlying LTP: {ltp}")
@@ -909,7 +883,7 @@ def main():
     # Settings sidebar
     with st.sidebar:
         st.subheader("⚙️ Trading Settings")
-        auto_trade = st.checkbox("Enable Auto Trade", value=False)
+        # auto_trade = st.checkbox("Enable Auto Trade", value=False)
         paper_trade = st.checkbox("📝 Enable Paper Trading", value=False)
 
         # Navigation
@@ -934,12 +908,12 @@ def main():
         st.session_state.token = token
 
         # API usage
-        st.subheader("📊 API Usage")
-        oc = st.session_state.get("option_chain_api_count", 0)
-        qc = st.session_state.get("quote_api_count", 0)
-        st.write(f"Option Chain API: {oc}")
-        st.write(f"Quote API: {qc}")
-        st.write(f"Total: {oc + qc}/{Config.API_RATE_LIMIT} per minute")
+        # st.subheader("📊 API Usage")
+        # oc = st.session_state.get("option_chain_api_count", 0)
+        # qc = st.session_state.get("quote_api_count", 0)
+        # st.write(f"Option Chain API: {oc}")
+        # st.write(f"Quote API: {qc}")
+        # st.write(f"Total: {oc + qc}/{Config.API_RATE_LIMIT} per minute")
 
     # Early return if no credentials
     if not (cid and token and sym):
@@ -989,8 +963,8 @@ def main():
 
         # Initialize Fyers for auto trading
         fy = None
-        if auto_trade:
-            fy = fyersModel.FyersModel(client_id=cid, token=token, is_async=False, log_path="")
+        # if auto_trade:
+        #     fy = fyersModel.FyersModel(client_id=cid, token=token, is_async=False, log_path="")
 
         # Trading logic
         if signal == "BUY" and not valid_buy:
@@ -1002,20 +976,20 @@ def main():
                 logging.info(f"📢 Signal detected: {signal} - Attempting paper trade")
                 ids = handle_paper_trade(signal, sell_pe, buy_pe, sell_ce, buy_ce)
                 st.session_state["paper_last_signal_order_ids"] = ids
-            elif auto_trade:
-                if st.session_state.get("live_last_signal") == signal and has_open_orders_for_last_signal(fy):
-                    st.info(f"Basket for {signal} already open.")
-                else:
-                    ids = handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fy)
-                    st.session_state["live_last_signal"] = signal
-                    st.session_state["live_last_signal_order_ids"] = ids
+            # elif auto_trade:
+            #     if st.session_state.get("live_last_signal") == signal and has_open_orders_for_last_signal(fy):
+            #         st.info(f"Basket for {signal} already open.")
+                # else:
+                #     ids = handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fy)
+                #     st.session_state["live_last_signal"] = signal
+                #     st.session_state["live_last_signal_order_ids"] = ids
             else:
                 st.info(f"Auto trade disabled; signal: {signal}.")
         elif signal == "SIDEWAYS":
             if paper_trade:
                 handle_paper_trade(signal, sell_pe, buy_pe, sell_ce, buy_ce)
-            elif auto_trade:
-                handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fy)
+            # elif auto_trade:
+            #     handle_basket_orders_atomic(signal, sell_pe, buy_pe, sell_ce, buy_ce, fy)
             else:
                 st.info("Auto trade disabled; sideways.")
         else:
