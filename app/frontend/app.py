@@ -94,7 +94,7 @@ if status_data:
     status_text = "Running" if is_running else "Stopped"
     status_color = "green" if is_running else "red"
 
-    st.header(f"Bot Status: <font color='{status_color}'>{status_text}</font>", unsafe_allow_html=True)
+    st.markdown(f"## Bot Status: <font color='{status_color}'>{status_text}</font>", unsafe_allow_html=True)
 
     col1, col2 = st.columns(2)
     with col1:
