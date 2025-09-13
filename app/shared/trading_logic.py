@@ -519,7 +519,7 @@ def trading_loop(session_state, app_state, symbol: str):
                 app_state.update_live_data(ltp, atm, signal, merged_df.to_dict('records'), timestamp)
 
                 if signal:
-                    sell_pe, buy_pe, sell_ce, buy_ce = select_strikes_atm_half_price(chain, atm)
+                    buy_pe, sell_pe, buy_ce,  sell_ce = select_strikes_atm_half_price(chain, atm)
 
                     valid_buy = (sell_pe is not None and buy_pe is not None)
                     valid_sell = (sell_ce is not None and buy_ce is not None)
