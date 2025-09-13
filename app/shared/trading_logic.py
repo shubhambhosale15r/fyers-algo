@@ -359,7 +359,7 @@ def has_open_orders_for_last_signal(fyers, session_state):
         logging.warning(f"Could not check open orders: {e}")
         return False
 
-def handle_basket_orders_atomic(session_state, signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers):
+def handle_basket_orders_atomic(session_state, app_state, signal, sell_pe, buy_pe, sell_ce, buy_ce, fyers):
     if session_state._hb_lock:
         return []
     session_state._hb_lock = True
@@ -432,6 +432,13 @@ def handle_basket_orders_atomic(session_state, signal, sell_pe, buy_pe, sell_ce,
         if entry_resp and entry_resp.get("s") == "ok":
             for item in entry_resp.get("data", []):
                 body = item.get("body", {})
+                order_details = {
+                    "timestamp": datetime.now(pytz.timezone("Asia/Kolkata")).strftime('%Y-%m-%d %H:%M:%S'),
+                    "symbol": item.get("symbol"),
+                    "status": body.get("message"),
+                    "id": body.get("id", "N/A")
+                }
+                app_state.add_order(order_details)
                 if body.get("s") == "ok" and body.get("id"):
                     placed_ids.append(body["id"])
             session_state.last_signal = signal
@@ -509,7 +516,7 @@ def trading_loop(session_state, app_state, symbol: str):
                 signal, atm, merged_df = format_and_show(chain, f"Current Expiry: {curr_date}", ltp, show_signals=True, fyers_api=fy)
 
                 app_state.add_log(f"[{timestamp}] LTP: {ltp}, ATM: {atm}, Signal: {signal}")
-                app_state.update_live_data(ltp, atm, signal, merged_df.to_dict('records'))
+                app_state.update_live_data(ltp, atm, signal, merged_df.to_dict('records'), timestamp)
 
                 if signal:
                     sell_pe, buy_pe, sell_ce, buy_ce = select_strikes_atm_half_price(chain, atm)
@@ -525,12 +532,12 @@ def trading_loop(session_state, app_state, symbol: str):
                         if session_state.live_last_signal == signal and has_open_orders_for_last_signal(fy, session_state):
                             app_state.add_log(f"Basket for {signal} already open.")
                         else:
-                            ids = handle_basket_orders_atomic(session_state, signal, sell_pe, buy_pe, sell_ce, buy_ce, fy)
+                            ids = handle_basket_orders_atomic(session_state, app_state, signal, sell_pe, buy_pe, sell_ce, buy_ce, fy)
                             session_state.live_last_signal = signal
                             session_state.live_last_signal_order_ids = ids
                             app_state.add_log(f"Placed {signal} order. IDs: {ids}")
                     elif signal == "SIDEWAYS":
-                        handle_basket_orders_atomic(session_state, signal, sell_pe, buy_pe, sell_ce, buy_ce, fy)
+                        handle_basket_orders_atomic(session_state, app_state, signal, sell_pe, buy_pe, sell_ce, buy_ce, fy)
                         app_state.add_log("Sideways signal. Exiting positions if configured.")
 
             time.sleep(Config.REFRESH_INTERVAL)

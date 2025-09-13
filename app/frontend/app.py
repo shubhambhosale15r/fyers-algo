@@ -133,6 +133,9 @@ if status_data:
 
     # --- Live Data Dashboard ---
     st.subheader("📊 Live Data")
+    last_updated = status_data.get("last_updated", "N/A")
+    st.caption(f"Last updated: {last_updated}")
+
     ltp = status_data.get('ltp', 'N/A')
     atm = status_data.get('atm', 'N/A')
     signal = status_data.get('signal', 'N/A')
@@ -147,7 +150,28 @@ if status_data:
     logs = status_data.get("logs", [])
     st.text_area("Live Logs", value="\n".join(logs), height=200, disabled=True)
 
+    # --- History Sections ---
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("🔔 Signal History")
+        signal_history = status_data.get("signal_history", [])
+        if signal_history:
+            st.dataframe(pd.DataFrame(signal_history), height=200)
+        else:
+            st.info("No signals generated yet.")
+
+    with col2:
+        st.subheader("🛒 Order History")
+        order_history = status_data.get("order_history", [])
+        if order_history:
+            st.dataframe(pd.DataFrame(order_history), height=200)
+        else:
+            st.info("No orders placed yet.")
+
     # --- Option Chain ---
+    st.markdown("---")
     st.subheader("⛓️ Option Chain Data")
     option_chain_data = status_data.get("option_chain", [])
     if option_chain_data:
