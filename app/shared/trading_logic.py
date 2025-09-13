@@ -497,11 +497,10 @@ def format_and_show(chain, title, ltp, show_signals=False, fyers_api=None):
 
     return signal, atm, merged
 
-def trading_loop(session_state, app_state):
-    sym = 'NSE:NIFTY50-INDEX'
+def trading_loop(session_state, app_state, symbol: str):
     while app_state.is_running():
         try:
-            ltp, chain, curr_date = update_all_data(session_state, session_state.cid, session_state.token, sym)
+            ltp, chain, curr_date = update_all_data(session_state, session_state.cid, session_state.token, symbol)
             ist = pytz.timezone("Asia/Kolkata")
             timestamp = datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S')
 

@@ -11,50 +11,54 @@ st.set_page_config(
     layout="wide",
 )
 
-# --- Backend API Configuration ---
+# --- App Constants ---
 API_URL = "http://127.0.0.1:8000"
+SYMBOLS = {
+    "NIFTY": "NSE:NIFTY50-INDEX",
+    "BANKNIFTY": "NSE:NIFTYBANK-INDEX",
+    "FINNIFTY": "NSE:FINNIFTY-INDEX"
+}
 
 # --- Helper Functions to Interact with Backend ---
+
 def get_status():
     try:
-        response = requests.get(f"{API_URL}/api/status")
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Error connecting to backend: {e}")
-        return None
+        r = requests.get(f"{API_URL}/api/status")
+        r.raise_for_status()
+        return r.json()
+    except requests.exceptions.RequestException:
+        return None # Error is handled in the main UI
 
 def get_settings():
     try:
-        response = requests.get(f"{API_URL}/api/settings")
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Error fetching settings: {e}")
-        return None
+        r = requests.get(f"{API_URL}/api/settings")
+        r.raise_for_status()
+        return r.json()
+    except requests.exceptions.RequestException:
+        return None # Error is handled in the main UI
 
 def post_settings(settings):
     try:
-        response = requests.post(f"{API_URL}/api/settings", json=settings)
-        response.raise_for_status()
+        r = requests.post(f"{API_URL}/api/settings", json=settings)
+        r.raise_for_status()
         st.success("Settings updated successfully!")
-        return response.json()
+        return r.json()
     except requests.exceptions.RequestException as e:
         st.error(f"Error updating settings: {e}")
         return None
 
-def start_bot():
+def start_bot(symbol: str):
     try:
-        response = requests.post(f"{API_URL}/api/start")
-        response.raise_for_status()
-        st.success("Bot started successfully!")
+        r = requests.post(f"{API_URL}/api/start", json={"symbol": symbol})
+        r.raise_for_status()
+        st.success(r.json().get("message", "Bot started successfully!"))
     except requests.exceptions.RequestException as e:
         st.error(f"Error starting bot: {e.response.json().get('detail', str(e))}")
 
 def stop_bot():
     try:
-        response = requests.post(f"{API_URL}/api/stop")
-        response.raise_for_status()
+        r = requests.post(f"{API_URL}/api/stop")
+        r.raise_for_status()
         st.warning("Bot stopped.")
     except requests.exceptions.RequestException as e:
         st.error(f"Error stopping bot: {e.response.json().get('detail', str(e))}")
@@ -62,36 +66,52 @@ def stop_bot():
 
 # --- UI Layout ---
 
-# Auto-refresh the page every 5 seconds
-st_autorefresh(interval=5 * 1000, key="datarefresh")
-
 st.title("📈 Fyers Algo-Trading Dashboard")
 
 # --- Settings Sidebar ---
 with st.sidebar:
     st.header("⚙️ Settings")
+
+    # --- UI Refresh Settings ---
+    st.subheader("UI Settings")
+    ui_refresh_interval = st.number_input("UI Refresh Interval (seconds)", min_value=5, max_value=60, value=5, step=1)
+
+    # --- Trading Settings ---
+    st.subheader("Trading Settings")
     settings = get_settings()
     if settings:
+        # Symbol Selection
+        symbol_key = st.selectbox("Select Underlying", options=list(SYMBOLS.keys()), index=0)
+
+        # Other Settings
         client_id = st.text_input("Client ID", value=settings.get("client_id", ""), type="password")
         access_token = st.text_input("Access Token", value=settings.get("access_token", ""), type="password")
         lot_size = st.number_input("Lot Size", value=settings.get("lot_size", 75), min_value=1)
+        backend_refresh_interval = st.number_input("Backend Refresh Interval (seconds)", value=settings.get("refresh_interval", 30), min_value=5)
 
         if st.button("Save Settings"):
             new_settings = {
                 "client_id": client_id,
                 "access_token": access_token,
                 "lot_size": lot_size,
+                "refresh_interval": backend_refresh_interval
             }
             post_settings(new_settings)
     else:
         st.warning("Could not load settings from backend.")
+        symbol_key = "NIFTY" # Default
+
+# Auto-refresh the page based on user setting
+st_autorefresh(interval=ui_refresh_interval * 1000, key="datarefresh")
+
 
 # --- Main Content ---
 status_data = get_status()
 
 if status_data:
     is_running = status_data.get("is_running", False)
-    status_text = "Running" if is_running else "Stopped"
+    active_symbol = status_data.get("symbol", "N/A")
+    status_text = f"Running for {active_symbol}" if is_running else "Stopped"
     status_color = "green" if is_running else "red"
 
     st.markdown(f"## Bot Status: <font color='{status_color}'>{status_text}</font>", unsafe_allow_html=True)
@@ -99,8 +119,8 @@ if status_data:
     col1, col2 = st.columns(2)
     with col1:
         if st.button("🚀 Start Trading", disabled=is_running):
-            start_bot()
-            time.sleep(1) # Give a moment for the status to update
+            start_bot(SYMBOLS[symbol_key])
+            time.sleep(1)
             st.rerun()
 
     with col2:
@@ -137,4 +157,4 @@ if status_data:
         st.info("No option chain data available yet.")
 
 else:
-    st.error("Could not connect to the backend. Please ensure the backend is running.")
+    st.error("Could not connect to the backend. Please ensure the backend server is running.")

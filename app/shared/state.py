@@ -10,12 +10,14 @@ class AppState:
         self.ltp = None
         self.atm = None
         self.signal = None
+        self.symbol = None  # Add symbol attribute
         self.option_chain_df = pd.DataFrame()
 
-    def start(self):
+    def start(self, symbol: str):
         with self._lock:
             self._is_running = True
-            self.add_log("Trading loop started.")
+            self.symbol = symbol
+            self.add_log(f"Trading loop started for {symbol}.")
 
     def stop(self):
         with self._lock:
@@ -48,6 +50,7 @@ class AppState:
                 "ltp": self.ltp,
                 "atm": self.atm,
                 "signal": self.signal,
+                "symbol": self.symbol,
                 "logs": list(self._logs),
                 "option_chain": self.option_chain_df.to_dict('records')
             }
