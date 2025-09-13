@@ -5,4 +5,7 @@ pytz>=2024.1
 fyers-apiv3>=3.0.0
 streamlit-autorefresh
 plotly>=5.0.0
+fastapi>=0.109.2
+uvicorn>=0.27.1
+requests>=2.31.0
 
