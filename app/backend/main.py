@@ -17,6 +17,14 @@ from shared.trading_logic import (
 
 # --- FastAPI App Initialization ---
 app = FastAPI(title="Trading Bot API")
+# Allow Streamlit frontend to talk to backend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # for testing; restrict later to your Streamlit URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # --- Singleton State Management ---
 app_state = AppState()
