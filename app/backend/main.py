@@ -3,6 +3,7 @@ import os
 import json
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 
 # Add the project root directory to the Python path to allow imports from app.shared
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
