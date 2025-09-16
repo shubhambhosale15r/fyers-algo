@@ -192,13 +192,16 @@ def compute_signals(merged_df, atm_strike, ltp):
         pcr = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0.0
 
         # --- 5. Threshold prices for 0.4 and 0.6 levels ---
-        bearish_price = support + 0.382 * range_val
-        bullish_price = support + 0.618 * range_val
+        # bearish_price = support + 0.382 * range_val
+        # bullish_price = support + 0.618 * range_val
+
+        bearish_price = support + 0.5 * range_val
+        bullish_price = support + 0.5 * range_val
 
         # --- 6. Signal logic ---
-        if pcr > 1 and range_index > 0.618:
+        if pcr > 1 and range_index > 0.5:
             signal = "BUY"
-        elif pcr < 1 and range_index < 0.382:
+        elif pcr < 1 and range_index < 0.5:
             signal = "SELL"
         else:
             signal = "SIDEWAYS"
