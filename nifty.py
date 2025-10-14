@@ -23,6 +23,8 @@ class Config:
     LOT_SIZE = 75  # nifty lot size
     MAX_RETRIES = 3
     RETRY_DELAY = 2  # seconds
+    STOP_LOSS_PCT = 0.0  # Percentage for stop loss
+    TARGET_PCT = 0.0  # Percentage for target
     
 
 
@@ -716,36 +718,56 @@ def handle_basket_orders_atomic(session_state, signal, sell_pe, buy_pe, sell_ce,
             return placed_ids
 
         entry_order = None
+        instrument_details = None
 
         if signal == "BUY":
             if buy_ce is not None:
-                entry_order = {
-                    "symbol": buy_ce["symbol"],
-                    "qty": lot,
-                    "type": 2,
-                    "side": 1,  # BUY
-                    "productType": "MARGIN",
-                    "validity": "DAY",
-                }
-                print(f"📥 [DEBUG] Preparing new BUY ATM CE order: {entry_order}")
+                instrument_details = buy_ce
+                print(f"📥 [DEBUG] Preparing new BUY ATM CE order: {instrument_details.get('symbol')}")
             else:
                 print("⚠️ [DEBUG] Missing ATM CE for BUY signal.")
                 return placed_ids
 
         elif signal == "SELL":
             if buy_pe is not None:
-                entry_order = {
-                    "symbol": buy_pe["symbol"],
-                    "qty": lot,
-                    "type": 2,
-                    "side": 1,  # BUY
-                    "productType": "MARGIN",
-                    "validity": "DAY",
-                }
-                print(f"📥 [DEBUG] Preparing new SELL ATM PE order: {entry_order}")
+                instrument_details = buy_pe
+                print(f"📥 [DEBUG] Preparing new SELL ATM PE order: {instrument_details.get('symbol')}")
             else:
                 print("⚠️ [DEBUG] Missing ATM PE for SELL signal.")
                 return placed_ids
+
+        if instrument_details:
+            ltp = instrument_details.get('ltp', 0)
+            if ltp <= 0:
+                print(f"❌ [DEBUG] Invalid LTP ({ltp}) for {instrument_details['symbol']}. Skipping order.")
+                return placed_ids
+
+            entry_order = {
+                "symbol": instrument_details["symbol"],
+                "qty": lot,
+                "type": 2,  # Market Order
+                "side": 1,  # BUY
+                "productType": "MARGIN",
+                "validity": "DAY",
+            }
+
+            # If SL/TP percentages are set, create a Bracket Order
+            if Config.STOP_LOSS_PCT > 0 and Config.TARGET_PCT > 0:
+                sl_price = round(ltp * (1 - Config.STOP_LOSS_PCT / 100), 1)
+                tp_price = round(ltp * (1 + Config.TARGET_PCT / 100), 1)
+
+                # Ensure SL/TP are not zero or negative
+                if sl_price > 0 and tp_price > 0:
+                    entry_order["productType"] = "BO"
+                    entry_order["stopLoss"] = sl_price
+                    entry_order["takeProfit"] = tp_price
+                    print(f"📊 [DEBUG] Bracket Order prepared for {instrument_details['symbol']}: "
+                          f"LTP={ltp}, SL={sl_price}, TP={tp_price}")
+                else:
+                    print(f"⚠️ [DEBUG] Invalid SL/TP calculated ({sl_price}, {tp_price}). Placing regular order.")
+            else:
+                print(f"📊 [DEBUG] Regular MARGIN order prepared for {instrument_details['symbol']}.")
+
 
         if entry_order:
             resp = fyers.place_order(data=entry_order)
@@ -898,7 +920,9 @@ def settings_menu(session_state):
         print(f"1. Client ID: {session_state.cid}")
         print(f"2. Access Token: {'*' * len(session_state.token) if session_state.token else 'Not set'}")
         print(f"3. Lot Size: {Config.LOT_SIZE}")
-        print("4. 🔙 Back to Main Menu")
+        print(f"4. Stop Loss %: {Config.STOP_LOSS_PCT}")
+        print(f"5. Target %: {Config.TARGET_PCT}")
+        print("6. 🔙 Back to Main Menu")
 
         choice = get_user_input("Select option", input_type=int)
 
@@ -909,6 +933,10 @@ def settings_menu(session_state):
         elif choice == 3:
             Config.LOT_SIZE = get_user_input("Enter Lot Size", Config.LOT_SIZE, int)
         elif choice == 4:
+            Config.STOP_LOSS_PCT = get_user_input("Enter Stop Loss %", Config.STOP_LOSS_PCT, float)
+        elif choice == 5:
+            Config.TARGET_PCT = get_user_input("Enter Target %", Config.TARGET_PCT, float)
+        elif choice == 6:
             break
         else:
             print("❌ Invalid option. Please try again.")
