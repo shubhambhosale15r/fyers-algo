@@ -1,1523 +1,1565 @@
-"""
-FYERS NIFTY ATM CE/PE 2x Option Backtest
-=========================================
-
-Strategy
---------
-For every NIFTY trading day:
-
-1. Get NIFTY underlying 09:15 open.
-2. Find the NIFTY strike closest to that open.
-3. Find the nearest weekly expiry available for that day.
-4. Get the ATM CE and ATM PE for that expiry.
-5. Record each option's 09:15 open.
-6. Independently monitor CE and PE:
-       Entry  = 2.0 x option_open
-       SL     = 1.5 x option_open
-       Target = 3.0 x option_open
-
-7. When price reaches Entry:
-       Enter LONG option.
-
-8. After entry:
-       SL     = 1.5 x option_open
-       Target = 3.0 x option_open
-
-9. CE and PE are traded independently.
-10. If both SL and Target are touched in the same 1-minute candle,
-    SL is assumed to occur first (conservative assumption).
-11. No new entry after ENTRY_CUTOFF.
-12. Any open position is force-closed at EOD.
-
-Output
-------
-Excel workbook containing:
-    - Trades
-    - Daily Summary
-    - Statistics
-    - Parameters
-    - Errors
-
-Requirements
-------------
-pip install fyers-apiv3 pandas openpyxl requests python-dateutil
-
-Authentication
---------------
-Set environment variables:
-
-Windows PowerShell:
-    $env:FYERS_CLIENT_ID="YOUR_CLIENT_ID"
-    $env:FYERS_ACCESS_TOKEN="YOUR_ACCESS_TOKEN"
-
-Linux/macOS:
-    export FYERS_CLIENT_ID="YOUR_CLIENT_ID"
-    export FYERS_ACCESS_TOKEN="YOUR_ACCESS_TOKEN"
-
-Then:
-    python nifty_2x_backtest.py
-
-NOTE
-----
-FYERS API details can change. If your installed fyers-apiv3 version has
-different method names, update the two wrapper functions:
-
-    get_expiry_dates()
-    get_expired_contracts()
-
-The rest of the backtest engine is independent of the API.
-"""
-
-from __future__ import annotations
-
-import os
-import sys
+import re
 import time
-import math
-import traceback
-from dataclasses import dataclass
-from datetime import datetime, date, time as dt_time, timedelta
-from typing import Dict, List, Optional, Tuple
+from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pandas as pd
+from openpyxl import Workbook
+from openpyxl.styles import Font
 
-try:
-    from fyers_apiv3 import fyersModel
-except ImportError:
-    print("ERROR: fyers-apiv3 is not installed.")
-    print("Run: pip install fyers-apiv3")
-    sys.exit(1)
+from fyers_apiv3 import fyersModel
 
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
-CLIENT_ID = os.getenv("FYERS_CLIENT_ID")
-ACCESS_TOKEN = os.getenv("FYERS_ACCESS_TOKEN")
+CLIENT_ID = ""
 
-if not CLIENT_ID or not ACCESS_TOKEN:
-    raise RuntimeError(
-        "\nMissing FYERS credentials.\n\n"
-        "Set:\n"
-        "  FYERS_CLIENT_ID\n"
-        "  FYERS_ACCESS_TOKEN\n\n"
-        "Do NOT hard-code your access token in this script.\n"
-    )
+# IMPORTANT:
+# Paste your CURRENT FYERS access token here locally.
+# Do not share the token.
+ACCESS_TOKEN = ""
 
-
-# Backtest period
 START_DATE = "2024-01-01"
 END_DATE = "2025-12-31"
 
-# Underlying
 UNDERLYING = "NSE:NIFTY50-INDEX"
 
-# Exchange/symbol components used when constructing option symbols
-OPTION_PREFIX = "NSE:NIFTY"
+ENTRY_MULTIPLIER = 2.0
+STOP_MULTIPLIER = 1.0
+TARGET_MULTIPLIER = 3.0
 
-# Candle resolution
-RESOLUTION = "1"
+LAST_ENTRY_TIME = "15:00"
+FORCE_EXIT_TIME = "15:05"
 
-# Strategy parameters
-ENTRY_MULTIPLE = 2.0
-SL_MULTIPLE = 1.5
-TARGET_MULTIPLE = 3.0
+QUANTITY = 65
 
-# Market times
-MARKET_OPEN = dt_time(9, 15)
+# If entry, SL and target are all touched in the same candle:
+# SL wins.
+SAME_CANDLE_RULE = "SL_FIRST"
 
-# We use the 09:15 candle's open as the option open.
-# Entry monitoring begins from the 09:15 candle onward.
-ENTRY_START = dt_time(9, 15)
-
-# Do not initiate a new position after this time.
-ENTRY_CUTOFF = dt_time(15, 15)
-
-# Force-close open positions at this time.
-FORCE_EXIT_TIME = dt_time(15, 29)
-
-# Conservative same-candle assumption:
-# if both SL and target are hit, SL wins.
-SAME_CANDLE_POLICY = "SL_FIRST"
-
-# Number of days requested per API call.
-# FYERS documents a 100-day maximum for intraday historical requests.
-API_CHUNK_DAYS = 90
-
-# Pause between API requests to reduce the chance of rate limiting.
-API_SLEEP_SECONDS = 0.20
-
-# Output
 OUTPUT_FILE = "NIFTY_2X_Backtest_2024_2025.xlsx"
 
-# Optional:
-# If True, save raw downloaded candles as CSV files.
-SAVE_RAW_DATA = False
-RAW_DATA_DIR = "fyers_raw_data"
+IST = ZoneInfo("Asia/Kolkata")
+
+
+# ============================================================
+# API / RETRY CONFIG
+# ============================================================
+
+# Small delay between normal FYERS calls.
+API_SLEEP_SECONDS = 0.35
+
+# Retry settings specifically for HTTP 429.
+MAX_429_RETRIES = 6
+
+# Conservative exponential backoff:
+# 2, 4, 8, 16, 32, 60 seconds approximately.
+INITIAL_429_BACKOFF = 2.0
+MAX_429_BACKOFF = 60.0
 
 
 # ============================================================
 # FYERS CLIENT
 # ============================================================
 
+if not ACCESS_TOKEN:
+    raise RuntimeError(
+        "ACCESS_TOKEN is empty. Paste your current FYERS access token "
+        "into ACCESS_TOKEN before running the script."
+    )
+
 fyers = fyersModel.FyersModel(
     client_id=CLIENT_ID,
-    is_async=False,
     token=ACCESS_TOKEN,
+    is_async=False,
     log_path=""
 )
 
 
 # ============================================================
-# DATA CLASSES
+# CACHES
 # ============================================================
 
-@dataclass
-class Trade:
-    trade_date: str
-    option_type: str
-    symbol: str
-    expiry: str
-    strike: float
+expiry_cache = None
 
-    option_open: float
+contract_cache = {}
+contract_failed_cache = {}
 
-    entry_price: float
-    stop_loss: float
-    target: float
+underlying_cache = {}
+option_cache = {}
 
-    entry_time: Optional[str]
-    exit_time: Optional[str]
+diagnostic_contract_expiries = set()
 
-    exit_price: float
-    exit_reason: str
-
-    quantity: int
-    gross_pnl: float
-    pnl_percent: float
-
-    underlying_open: float
+errors = []
 
 
 # ============================================================
-# UTILITY FUNCTIONS
+# BASIC HELPERS
 # ============================================================
 
-def parse_epoch_to_datetime(ts: int) -> datetime:
+def print_progress(message):
+    print(message, flush=True)
+
+
+def api_sleep():
+    time.sleep(API_SLEEP_SECONDS)
+
+
+def parse_date(value):
+    if isinstance(value, date):
+        return value
+
+    return datetime.strptime(
+        str(value),
+        "%Y-%m-%d"
+    ).date()
+
+
+def format_date(value):
+    return parse_date(value).strftime("%Y-%m-%d")
+
+
+def time_to_minutes(value):
+    hour, minute = map(int, value.split(":"))
+    return hour * 60 + minute
+
+
+LAST_ENTRY_MINUTES = time_to_minutes(LAST_ENTRY_TIME)
+FORCE_EXIT_MINUTES = time_to_minutes(FORCE_EXIT_TIME)
+
+
+def candle_timestamp_to_ist(timestamp):
     """
-    Convert epoch seconds returned by FYERS into local datetime.
+    Convert FYERS epoch timestamp to naive IST datetime.
 
-    FYERS NSE timestamps are expected to represent Indian market time.
+    Excel/openpyxl does not accept timezone-aware datetimes,
+    so the timezone is removed after conversion to IST.
     """
-    return datetime.fromtimestamp(ts)
+    return datetime.fromtimestamp(
+        int(timestamp),
+        tz=IST
+    ).replace(tzinfo=None)
 
 
-def safe_float(value) -> Optional[float]:
-    try:
-        x = float(value)
-
-        if not math.isfinite(x):
-            return None
-
-        return x
-
-    except (TypeError, ValueError):
-        return None
+def candle_time_minutes(timestamp):
+    dt = candle_timestamp_to_ist(timestamp)
+    return dt.hour * 60 + dt.minute
 
 
-def daterange(start: date, end: date):
-    current = start
-
-    while current <= end:
-        yield current
-        current += timedelta(days=1)
-
-
-def is_weekday(d: date) -> bool:
-    return d.weekday() < 5
+def record_error(trading_date, stage, message):
+    errors.append({
+        "Date": format_date(trading_date),
+        "Stage": stage,
+        "Error": str(message)
+    })
 
 
-def nearest_strike(price: float, strikes: List[float]) -> float:
-    """
-    Find strike closest to underlying open.
+# ============================================================
+# FYERS RESPONSE HELPERS
+# ============================================================
 
-    In the extremely unlikely event of an exact tie, the lower
-    strike is selected.
-    """
-    return min(
-        strikes,
-        key=lambda x: (abs(x - price), x)
+def is_no_data_response(response):
+    if not isinstance(response, dict):
+        return False
+
+    return response.get("s") == "no_data"
+
+
+def is_rate_limit_response(response):
+    if not isinstance(response, dict):
+        return False
+
+    if response.get("code") == 429:
+        return True
+
+    message = str(
+        response.get("message", "")
+    ).lower()
+
+    return (
+        "request limit" in message
+        or "rate limit" in message
+        or "too many requests" in message
     )
 
 
-def make_chunks(
-    start_date: date,
-    end_date: date,
-    chunk_days: int = API_CHUNK_DAYS
-):
-    """
-    Split historical requests into chunks.
-    """
-
-    current = start_date
-
-    while current <= end_date:
-        chunk_end = min(
-            current + timedelta(days=chunk_days - 1),
-            end_date
+def check_fyers_response(response, context):
+    if not isinstance(response, dict):
+        raise RuntimeError(
+            f"{context}: Invalid FYERS response: {response}"
         )
 
-        yield current, chunk_end
+    if response.get("s") != "ok":
+        raise RuntimeError(
+            f"{context}: FYERS response not OK: {response}"
+        )
 
-        current = chunk_end + timedelta(days=1)
+    return response
 
 
 # ============================================================
-# FYERS API HELPERS
+# 429 RETRY WRAPPER
 # ============================================================
 
-def api_call_with_retry(
-    function,
-    data: dict,
-    retries: int = 3
-):
+def fyers_call_with_429_retry(api_function, data, context):
     """
-    Generic retry wrapper.
+    Call a FYERS API function.
+
+    If FYERS returns HTTP 429 / request limit reached,
+    retry with exponential backoff.
+
+    Other responses are returned immediately.
     """
 
-    last_exception = None
+    backoff = INITIAL_429_BACKOFF
 
-    for attempt in range(1, retries + 1):
+    for attempt in range(MAX_429_RETRIES + 1):
 
-        try:
+        response = api_function(data)
 
-            response = function(data)
-
-            if response is None:
-                raise RuntimeError("FYERS returned None")
-
+        if not is_rate_limit_response(response):
             return response
 
-        except Exception as exc:
-
-            last_exception = exc
-
-            print(
-                f"API error attempt {attempt}/{retries}: {exc}"
+        if attempt >= MAX_429_RETRIES:
+            raise RuntimeError(
+                f"{context}: FYERS request limit remained active "
+                f"after {MAX_429_RETRIES} retries: {response}"
             )
 
-            if attempt < retries:
-                time.sleep(attempt * 2)
+        print_progress(
+            f"FYERS 429 | {context} | "
+            f"retry {attempt + 1}/{MAX_429_RETRIES} "
+            f"in {backoff:.0f}s"
+        )
 
-    raise last_exception
+        time.sleep(backoff)
+
+        backoff = min(
+            backoff * 2,
+            MAX_429_BACKOFF
+        )
+
+    raise RuntimeError(
+        f"{context}: unexpected retry failure"
+    )
 
 
 # ============================================================
-# GET NIFTY UNDERLYING DATA
+# EXPIRY DATES
 # ============================================================
 
-def get_underlying_history(
-    start_date: date,
-    end_date: date
-) -> pd.DataFrame:
+def load_all_option_expiries():
+    global expiry_cache
 
-    """
-    Download NIFTY 1-minute candles.
+    if expiry_cache is not None:
+        return expiry_cache
 
-    We only need the daily 09:15 opening candle for determining
-    the ATM strike, but downloading 1-minute data also makes it
-    possible to verify trading days.
-    """
+    print_progress("Loading NIFTY option expiry dates...")
 
-    all_rows = []
+    all_expiries = set()
 
-    for chunk_start, chunk_end in make_chunks(
-        start_date,
-        end_date
-    ):
+    start = parse_date(START_DATE)
+    end = parse_date(END_DATE)
 
-        print(
-            f"Downloading NIFTY underlying: "
-            f"{chunk_start} -> {chunk_end}"
+    for year in range(start.year, end.year + 1):
+
+        range_start = date(year, 1, 1)
+        range_end = date(year, 12, 31)
+
+        range_start = max(
+            range_start,
+            start
+        )
+
+        range_end = min(
+            range_end,
+            end
         )
 
         data = {
             "symbol": UNDERLYING,
-            "resolution": RESOLUTION,
-            "date_format": "1",
-            "range_from": chunk_start.strftime("%Y-%m-%d"),
-            "range_to": chunk_end.strftime("%Y-%m-%d"),
-            "cont_flag": "1"
+            "range_from": format_date(range_start),
+            "range_to": format_date(range_end),
+            "date_format": "1"
         }
-
-        response = api_call_with_retry(
-            fyers.history,
-            data
-        )
-
-        if response.get("s") != "ok":
-
-            print(
-                "Underlying response:",
-                response
-            )
-
-            time.sleep(API_SLEEP_SECONDS)
-            continue
-
-        for candle in response.get("candles", []):
-
-            if len(candle) < 5:
-                continue
-
-            ts = int(candle[0])
-
-            dt = parse_epoch_to_datetime(ts)
-
-            all_rows.append({
-                "timestamp": ts,
-                "datetime": dt,
-                "date": dt.date(),
-                "time": dt.time(),
-                "open": safe_float(candle[1]),
-                "high": safe_float(candle[2]),
-                "low": safe_float(candle[3]),
-                "close": safe_float(candle[4]),
-                "volume": safe_float(candle[5]) if len(candle) > 5 else None
-            })
-
-        time.sleep(API_SLEEP_SECONDS)
-
-    if not all_rows:
-        raise RuntimeError(
-            "No NIFTY underlying data returned."
-        )
-
-    df = pd.DataFrame(all_rows)
-
-    df = df.drop_duplicates(
-        subset=["timestamp"]
-    )
-
-    df = df.sort_values("timestamp")
-
-    # We only need 09:15.
-    opening = df[
-        df["time"].apply(
-            lambda x: x.hour == 9 and x.minute == 15
-        )
-    ].copy()
-
-    opening = opening[
-        opening["open"].notna()
-    ]
-
-    opening = opening.drop_duplicates(
-        subset=["date"],
-        keep="first"
-    )
-
-    return opening.reset_index(drop=True)
-
-
-# ============================================================
-# EXPIRY DISCOVERY
-# ============================================================
-
-def get_expiry_dates(
-    symbol: str,
-    start_date: date,
-    end_date: date
-) -> List[date]:
-
-    """
-    Get available expiry dates from FYERS.
-
-    IMPORTANT:
-    FYERS API versions have changed endpoint wrappers over time.
-
-    This function tries the common FYERS v3 method first.
-
-    If your installed SDK exposes expiry information differently,
-    this is the function to adapt.
-    """
-
-    expiry_dates = []
-
-    # --------------------------------------------------------
-    # Attempt 1: history_expiry_dates
-    # --------------------------------------------------------
-
-    if hasattr(fyers, "get_expiry_dates"):
-
-        for chunk_start, chunk_end in make_chunks(
-            start_date,
-            end_date
-        ):
-
-            data = {
-                "symbol": symbol,
-                "start_date": chunk_start.strftime("%Y-%m-%d"),
-                "end_date": chunk_end.strftime("%Y-%m-%d")
-            }
-
-            try:
-
-                response = api_call_with_retry(
-                    fyers.get_expiry_dates,
-                    data
-                )
-
-                expiry_dates.extend(
-                    extract_expiry_dates(response)
-                )
-
-            except Exception as exc:
-
-                print(
-                    "get_expiry_dates failed:",
-                    exc
-                )
-
-    # --------------------------------------------------------
-    # Attempt 2: history_underlying_symbols
-    #
-    # We discover expiries from actual contracts if needed.
-    # --------------------------------------------------------
-
-    if not expiry_dates:
-
-        print(
-            "\nWARNING: Direct expiry-date endpoint was not "
-            "available through this SDK."
-        )
-
-        print(
-            "Expiry dates will instead be discovered from "
-            "contract metadata."
-        )
-
-    return sorted(set(expiry_dates))
-
-
-def extract_expiry_dates(response) -> List[date]:
-
-    """
-    Extract dates from several possible FYERS response shapes.
-    """
-
-    results = []
-
-    if not isinstance(response, dict):
-        return results
-
-    # Common possible structures
-    candidates = []
-
-    data = response.get("data")
-
-    if isinstance(data, dict):
-
-        for key in [
-            "expiry_dates",
-            "expiryDates",
-            "expiry",
-            "expiries",
-            "dates"
-        ]:
-
-            value = data.get(key)
-
-            if isinstance(value, list):
-                candidates.extend(value)
-
-    if isinstance(response.get("expiry_dates"), list):
-        candidates.extend(
-            response["expiry_dates"]
-        )
-
-    if isinstance(response.get("expiryDates"), list):
-        candidates.extend(
-            response["expiryDates"]
-        )
-
-    for value in candidates:
-
-        if isinstance(value, dict):
-
-            for key in [
-                "expiry_date",
-                "expiryDate",
-                "date"
-            ]:
-
-                if key in value:
-                    value = value[key]
-                    break
 
         try:
 
-            if isinstance(value, (int, float)):
+            response = fyers_call_with_429_retry(
+                fyers.expiry_dates,
+                data,
+                f"expiry_dates {year}"
+            )
 
-                # Handle epoch milliseconds/seconds
-                v = float(value)
+            check_fyers_response(
+                response,
+                f"expiry_dates {year}"
+            )
 
-                if v > 10_000_000_000:
-                    v /= 1000
+            expiry_data = (
+                response
+                .get("data", {})
+                .get("expiry_dates", {})
+            )
 
-                d = datetime.fromtimestamp(v).date()
+            options = expiry_data.get(
+                "options",
+                []
+            )
 
-            else:
+            if options:
+                for expiry in options:
 
-                text = str(value)[:10]
+                    try:
+                        all_expiries.add(
+                            parse_date(expiry)
+                        )
 
-                d = datetime.strptime(
-                    text,
-                    "%Y-%m-%d"
-                ).date()
+                    except Exception:
+                        print_progress(
+                            f"WARNING: Could not parse expiry: "
+                            f"{expiry}"
+                        )
 
-            results.append(d)
+        except Exception as exc:
 
-        except Exception:
-            pass
+            raise RuntimeError(
+                f"Could not load expiry dates for {year}: {exc}"
+            ) from exc
 
-    return results
+        api_sleep()
+
+    expiry_cache = sorted(
+        all_expiries
+    )
+
+    if not expiry_cache:
+        raise RuntimeError(
+            "FYERS returned no option expiry dates."
+        )
+
+    print_progress(
+        f"Loaded {len(expiry_cache)} option expiry dates."
+    )
+
+    print_progress(
+        f"First expiry: {expiry_cache[0]}"
+    )
+
+    print_progress(
+        f"Last expiry : {expiry_cache[-1]}"
+    )
+
+    return expiry_cache
+
+
+def get_expiry_for_trading_date(trading_date):
+    expiries = load_all_option_expiries()
+
+    candidates = [
+        expiry
+        for expiry in expiries
+        if expiry >= trading_date
+    ]
+
+    if not candidates:
+        raise RuntimeError(
+            f"No option expiry on or after "
+            f"{format_date(trading_date)}"
+        )
+
+    return candidates[0]
 
 
 # ============================================================
 # CONTRACT DISCOVERY
 # ============================================================
 
-def get_contracts_for_expiry(
-    trade_date: date,
-    expiry_date: date
-) -> List[str]:
+def load_contracts_for_expiry(expiry):
 
-    """
-    Ask FYERS for NIFTY option contracts for the given expiry.
+    expiry_key = format_date(expiry)
 
-    Uses history_underlying_symbols when available.
-    """
+    if expiry_key in contract_cache:
+        return contract_cache[expiry_key]
+
+    # If a previous request ultimately failed because of repeated
+    # 429 responses, don't endlessly repeat the same request for
+    # every trading day.
+    if expiry_key in contract_failed_cache:
+        raise RuntimeError(
+            contract_failed_cache[expiry_key]
+        )
 
     data = {
         "symbol": UNDERLYING,
-        "expiry_date": expiry_date.strftime("%Y-%m-%d")
+        "expiry_date": expiry_key
     }
 
-    if not hasattr(
-        fyers,
-        "history_underlying_symbols"
-    ):
-        raise RuntimeError(
-            "Installed fyers-apiv3 does not expose "
-            "history_underlying_symbols(). "
-            "Please update fyers-apiv3."
+    try:
+
+        response = fyers_call_with_429_retry(
+            fyers.history_underlying_symbols,
+            data,
+            f"history_underlying_symbols {expiry_key}"
         )
 
-    response = api_call_with_retry(
-        fyers.history_underlying_symbols,
-        data
-    )
+        check_fyers_response(
+            response,
+            f"history_underlying_symbols {expiry_key}"
+        )
 
-    if response.get("s") not in ("ok", None):
+        contracts = (
+            response
+            .get("data", {})
+            .get("contracts", {})
+        )
 
-        # Some SDK versions use "code" instead.
-        if response.get("code") != 200:
+        options = contracts.get(
+            "options",
+            []
+        )
+
+        if not options:
             raise RuntimeError(
-                f"Contract discovery failed: {response}"
+                f"No option contracts returned "
+                f"for expiry {expiry_key}"
             )
 
-    data_response = response.get(
-        "data",
-        {}
-    )
+        contract_cache[expiry_key] = options
 
-    contracts = data_response.get(
-        "contracts",
-        {}
-    )
+        if expiry_key not in diagnostic_contract_expiries:
 
-    options = contracts.get(
-        "options",
-        []
-    )
+            print_progress(
+                f"Contracts {expiry_key}: "
+                f"{len(options)} options"
+            )
 
-    return options
+            print_progress(
+                f"Sample contracts {expiry_key}:"
+            )
+
+            for contract in options[:10]:
+                print_progress(
+                    f"    {contract}"
+                )
+
+            diagnostic_contract_expiries.add(
+                expiry_key
+            )
+
+        api_sleep()
+
+        return options
+
+    except Exception as exc:
+
+        message = (
+            f"Could not load contracts for expiry "
+            f"{expiry_key}: {exc}"
+        )
+
+        # Only remember terminal failure.
+        # Normal 429 retries have already happened inside
+        # fyers_call_with_429_retry().
+        contract_failed_cache[expiry_key] = message
+
+        raise RuntimeError(
+            message
+        ) from exc
 
 
-def parse_option_symbol(symbol: str):
+# ============================================================
+# CONTRACT STRIKE PARSER
+# ============================================================
+
+def extract_strike_from_contract(symbol, expiry):
     """
-    Parse NIFTY option symbol.
+    FYERS NIFTY expired-option symbols observed from the API:
 
-    Examples:
-        NSE:NIFTY25MAR23000CE
-        NSE:NIFTY25MAR23000PE
+        NSE:NIFTY25D1620450CE
+        NSE:NIFTY25D1620450PE
+
+    The important part for ATM selection is the numeric strike
+    immediately before CE/PE.
+
+    We deliberately do NOT reconstruct the expiry prefix here.
+    The contract list was already returned by FYERS for the
+    requested expiry.
     """
 
-    text = symbol.split(":")[-1]
-
-    if not text.startswith("NIFTY"):
+    if not isinstance(symbol, str):
         return None
 
-    if text.endswith("CE"):
-        option_type = "CE"
-        body = text[:-2]
+    symbol = symbol.strip().upper()
 
-    elif text.endswith("PE"):
-        option_type = "PE"
-        body = text[:-2]
+    if not symbol.startswith(
+        "NSE:NIFTY"
+    ):
+        return None
+
+    if symbol.endswith("CE"):
+        body = symbol[:-2]
+
+    elif symbol.endswith("PE"):
+        body = symbol[:-2]
 
     else:
         return None
 
-    # Find trailing strike digits.
-    digits = ""
+    match = re.search(
+        r"(\d+(?:\.\d+)?)$",
+        body
+    )
 
-    for char in reversed(body):
-
-        if char.isdigit():
-            digits = char + digits
-
-        else:
-            break
-
-    if not digits:
+    if not match:
         return None
 
-    strike = float(digits)
+    try:
+        return float(
+            match.group(1)
+        )
 
-    return {
-        "symbol": symbol,
-        "option_type": option_type,
-        "strike": strike
-    }
+    except Exception:
+        return None
 
 
-def build_contract_map(
-    contracts: List[str]
-) -> Dict[float, Dict[str, str]]:
+# ============================================================
+# ATM SELECTION
+# ============================================================
 
-    """
-    Returns:
+def get_atm_option_symbols(
+    contracts,
+    expiry,
+    underlying_open
+):
 
-        {
-            22000: {
-                "CE": "NSE:NIFTY...",
-                "PE": "NSE:NIFTY..."
-            }
-        }
-    """
-
-    result = {}
+    parsed = []
 
     for symbol in contracts:
 
-        parsed = parse_option_symbol(symbol)
+        strike = extract_strike_from_contract(
+            symbol,
+            expiry
+        )
 
-        if parsed is None:
+        if strike is None:
             continue
 
-        strike = parsed["strike"]
-        option_type = parsed["option_type"]
+        if symbol.endswith("CE"):
+            option_type = "CE"
 
-        if strike not in result:
-            result[strike] = {}
+        elif symbol.endswith("PE"):
+            option_type = "PE"
 
-        result[strike][option_type] = symbol
+        else:
+            continue
+
+        parsed.append({
+            "symbol": symbol,
+            "strike": strike,
+            "option_type": option_type
+        })
+
+    if not parsed:
+
+        print_progress("")
+        print_progress("=" * 48)
+        print_progress("ATM PARSE FAILED")
+        print_progress(
+            f"Expiry         : {expiry}"
+        )
+        print_progress(
+            f"Underlying open: {underlying_open}"
+        )
+        print_progress(
+            f"Contracts      : {len(contracts)}"
+        )
+        print_progress(
+            "Actual FYERS contracts:"
+        )
+
+        for contract in contracts[:30]:
+            print_progress(
+                f"    {contract}"
+            )
+
+        print_progress("=" * 48)
+
+        raise RuntimeError(
+            f"Could not parse any NIFTY option "
+            f"contracts for expiry {expiry}"
+        )
+
+    strikes = sorted(
+        set(
+            item["strike"]
+            for item in parsed
+        )
+    )
+
+    atm_strike = min(
+        strikes,
+        key=lambda strike: (
+            abs(
+                strike - underlying_open
+            ),
+            strike
+        )
+    )
+
+    ce_symbol = None
+    pe_symbol = None
+
+    for item in parsed:
+
+        if item["strike"] != atm_strike:
+            continue
+
+        if item["option_type"] == "CE":
+            ce_symbol = item["symbol"]
+
+        elif item["option_type"] == "PE":
+            pe_symbol = item["symbol"]
+
+    if ce_symbol is None or pe_symbol is None:
+
+        print_progress(
+            f"ATM PAIR INCOMPLETE | "
+            f"Expiry={expiry} | "
+            f"Strike={atm_strike} | "
+            f"CE={ce_symbol} | "
+            f"PE={pe_symbol}"
+        )
+
+        raise RuntimeError(
+            f"Incomplete ATM pair for expiry "
+            f"{expiry}, strike {atm_strike}"
+        )
+
+    return (
+        atm_strike,
+        ce_symbol,
+        pe_symbol
+    )
+
+
+# ============================================================
+# UNDERLYING DATA
+# ============================================================
+
+def get_underlying_day_data(trading_date):
+
+    key = format_date(
+        trading_date
+    )
+
+    if key in underlying_cache:
+        return underlying_cache[key]
+
+    data = {
+        "symbol": UNDERLYING,
+        "resolution": "1",
+        "date_format": "1",
+        "range_from": key,
+        "range_to": key,
+        "cont_flag": "1"
+    }
+
+    try:
+
+        response = fyers_call_with_429_retry(
+            fyers.history,
+            data,
+            f"NIFTY history {key}"
+        )
+
+        # FYERS can legitimately return:
+        #
+        # {
+        #   "candles": [],
+        #   "s": "no_data"
+        # }
+        #
+        # This is NOT an API failure.
+        if is_no_data_response(response):
+
+            underlying_cache[key] = []
+
+            api_sleep()
+
+            return []
+
+        check_fyers_response(
+            response,
+            f"NIFTY history {key}"
+        )
+
+        candles = response.get(
+            "candles",
+            []
+        )
+
+        underlying_cache[key] = candles
+
+        api_sleep()
+
+        return candles
+
+    except Exception as exc:
+
+        raise RuntimeError(
+            f"NIFTY history {key}: {exc}"
+        ) from exc
+
+
+# ============================================================
+# OPTION DATA
+# ============================================================
+
+def get_option_day_data(
+    symbol,
+    trading_date
+):
+
+    key = (
+        symbol,
+        format_date(trading_date)
+    )
+
+    if key in option_cache:
+        return option_cache[key]
+
+    data = {
+        "symbol": symbol,
+        "resolution": "1",
+        "date_format": "1",
+        "range_from": format_date(trading_date),
+        "range_to": format_date(trading_date),
+        "include_greeks": "1",
+        "include_oi": "1"
+    }
+
+    try:
+
+        response = fyers_call_with_429_retry(
+            fyers.fno_historical_data,
+            data,
+            f"FNO history {symbol} "
+            f"{format_date(trading_date)}"
+        )
+
+        # IMPORTANT:
+        # no_data is a valid FYERS response.
+        if is_no_data_response(response):
+
+            option_cache[key] = []
+
+            api_sleep()
+
+            return []
+
+        check_fyers_response(
+            response,
+            f"FNO history {symbol} "
+            f"{format_date(trading_date)}"
+        )
+
+        candles = response.get(
+            "candles",
+            []
+        )
+
+        option_cache[key] = candles
+
+        api_sleep()
+
+        return candles
+
+    except Exception as exc:
+
+        raise RuntimeError(
+            f"FNO history {symbol} "
+            f"{format_date(trading_date)}: {exc}"
+        ) from exc
+
+
+# ============================================================
+# CANDLE FILTERING
+# ============================================================
+
+def filter_session_candles(candles):
+
+    result = []
+
+    for candle in candles:
+
+        if not candle:
+            continue
+
+        timestamp = candle[0]
+
+        dt = candle_timestamp_to_ist(
+            timestamp
+        )
+
+        minutes = (
+            dt.hour * 60
+            + dt.minute
+        )
+
+        if (
+            minutes >= 9 * 60 + 15
+            and minutes <= FORCE_EXIT_MINUTES
+        ):
+            result.append({
+                "timestamp": timestamp,
+                "datetime": dt,
+                "open": float(candle[1]),
+                "high": float(candle[2]),
+                "low": float(candle[3]),
+                "close": float(candle[4]),
+                "volume": (
+                    float(candle[5])
+                    if len(candle) > 5
+                    else None
+                )
+            })
+
+    result.sort(
+        key=lambda x: x["timestamp"]
+    )
 
     return result
 
 
 # ============================================================
-# NEAREST EXPIRY
+# TRADE SIMULATION
 # ============================================================
 
-def find_nearest_weekly_expiry(
-    trade_date: date,
-    expiry_dates: List[date]
-) -> Optional[date]:
+def simulate_trade(
+    trading_date,
+    expiry,
+    underlying_open,
+    atm_strike,
+    option_type,
+    symbol,
+    candles
+):
 
-    """
-    Select the nearest expiry on or after the trading date.
-
-    The returned expiry must be no more than 7 calendar days
-    from the trading date for this strategy's weekly-expiry
-    assumption.
-
-    If FYERS returns all NIFTY expiries, this naturally selects
-    the next available expiry.
-    """
-
-    candidates = [
-        x
-        for x in expiry_dates
-        if x >= trade_date
-    ]
-
-    if not candidates:
-        return None
-
-    candidates.sort()
-
-    for expiry in candidates:
-
-        days = (expiry - trade_date).days
-
-        if days <= 7:
-            return expiry
-
-    return None
-
-
-# ============================================================
-# OPTION HISTORICAL DATA
-# ============================================================
-
-def get_option_history(
-    symbol: str,
-    trade_date: date
-) -> pd.DataFrame:
-
-    """
-    Download one trading day's 1-minute option data.
-    """
-
-    data = {
-        "symbol": symbol,
-        "resolution": RESOLUTION,
-        "date_format": "1",
-        "range_from": trade_date.strftime("%Y-%m-%d"),
-        "range_to": trade_date.strftime("%Y-%m-%d"),
-        "include_oi": "1"
-    }
-
-    response = api_call_with_retry(
-        fyers.fno_historical_data,
-        data
+    session = filter_session_candles(
+        candles
     )
 
-    if response.get("s") != "ok":
-
-        return pd.DataFrame()
-
-    rows = []
-
-    for candle in response.get(
-        "candles",
-        []
-    ):
-
-        if len(candle) < 5:
-            continue
-
-        timestamp = int(candle[0])
-
-        dt = parse_epoch_to_datetime(
-            timestamp
-        )
-
-        rows.append({
-            "timestamp": timestamp,
-            "datetime": dt,
-            "date": dt.date(),
-            "time": dt.time(),
-            "open": safe_float(candle[1]),
-            "high": safe_float(candle[2]),
-            "low": safe_float(candle[3]),
-            "close": safe_float(candle[4]),
-            "volume": safe_float(candle[5]) if len(candle) > 5 else None,
-            "oi": safe_float(candle[6]) if len(candle) > 6 else None
-        })
-
-    if not rows:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(rows)
-
-    df = df.sort_values(
-        "timestamp"
-    )
-
-    df = df.drop_duplicates(
-        subset=["timestamp"]
-    )
-
-    return df.reset_index(drop=True)
-
-
-# ============================================================
-# FIND 09:15 OPTION OPEN
-# ============================================================
-
-def get_0915_open(
-    df: pd.DataFrame
-) -> Optional[float]:
-
-    if df.empty:
+    if not session:
         return None
 
-    rows = df[
-        df["time"].apply(
-            lambda x:
-                x.hour == 9 and x.minute == 15
-        )
-    ]
+    first_candle = session[0]
 
-    if rows.empty:
-        return None
-
-    value = rows.iloc[0]["open"]
-
-    return safe_float(value)
-
-
-# ============================================================
-# BACKTEST ONE OPTION
-# ============================================================
-
-def backtest_option(
-    df: pd.DataFrame,
-    trade_date: date,
-    option_type: str,
-    symbol: str,
-    expiry: date,
-    strike: float,
-    underlying_open: float
-) -> Optional[Trade]:
-
-    """
-    Backtest one option for one day.
-
-    Rules:
-
-        option_open = 09:15 option open
-
-        entry = option_open * 2
-
-        SL = option_open * 1.5
-
-        target = option_open * 3
-
-    Entry is triggered when candle high reaches entry.
-
-    After entry:
-
-        if low <= SL and high >= target:
-            SL wins
-
-        elif low <= SL:
-            SL
-
-        elif high >= target:
-            TARGET
-
-    Any open trade is force-closed at FORCE_EXIT_TIME
-    using that candle's close, or the last available close.
-    """
-
-    if df.empty:
-        return None
-
-    option_open = get_0915_open(df)
-
-    if option_open is None:
-        return None
+    option_open = first_candle["open"]
 
     if option_open <= 0:
         return None
 
-    entry_price = option_open * ENTRY_MULTIPLE
-    stop_loss = option_open * SL_MULTIPLE
-    target = option_open * TARGET_MULTIPLE
+    entry_price = (
+        option_open
+        * ENTRY_MULTIPLIER
+    )
 
-    # --------------------------------------------------------
-    # Only candles from 09:15 onward
-    # --------------------------------------------------------
+    stop_price = (
+        option_open
+        * STOP_MULTIPLIER
+    )
 
-    intraday = df[
-        df["time"] >= ENTRY_START
-    ].copy()
+    target_price = (
+        option_open
+        * TARGET_MULTIPLIER
+    )
 
-    if intraday.empty:
-        return None
+    entry_candle = None
+    entry_index = None
 
-    # --------------------------------------------------------
-    # Entry search
-    # --------------------------------------------------------
+    for index, candle in enumerate(session):
 
-    entry_row = None
+        candle_minutes = (
+            candle["datetime"].hour * 60
+            + candle["datetime"].minute
+        )
 
-    for _, row in intraday.iterrows():
-
-        candle_time = row["time"]
-
-        if candle_time > ENTRY_CUTOFF:
+        if candle_minutes > LAST_ENTRY_MINUTES:
             break
 
-        high = safe_float(row["high"])
+        if candle["high"] >= entry_price:
 
-        if high is None:
-            continue
-
-        if high >= entry_price:
-
-            entry_row = row
+            entry_candle = candle
+            entry_index = index
             break
 
-    # No entry
-    if entry_row is None:
+    if entry_candle is None:
         return None
 
-    entry_time = entry_row["datetime"]
-
-    # --------------------------------------------------------
-    # Exit search
-    # --------------------------------------------------------
-
-    after_entry = intraday[
-        intraday["timestamp"]
-        >= entry_row["timestamp"]
-    ].copy()
+    entry_time = entry_candle["datetime"]
 
     exit_price = None
     exit_time = None
     exit_reason = None
 
-    for _, row in after_entry.iterrows():
+    # --------------------------------------------------------
+    # Check candles from entry onward.
+    # --------------------------------------------------------
 
-        candle_time = row["time"]
+    for candle in session[entry_index:]:
 
-        high = safe_float(row["high"])
-        low = safe_float(row["low"])
+        candle_time = candle["datetime"]
 
-        if high is None or low is None:
-            continue
+        candle_minutes = (
+            candle_time.hour * 60
+            + candle_time.minute
+        )
 
-        # Force exit
-        if candle_time >= FORCE_EXIT_TIME:
+        hit_sl = (
+            candle["low"] <= stop_price
+        )
 
-            close = safe_float(row["close"])
+        hit_target = (
+            candle["high"] >= target_price
+        )
 
-            if close is not None:
-                exit_price = close
-                exit_time = row["datetime"]
-                exit_reason = "EOD"
-                break
-
-        hit_sl = low <= stop_loss
-        hit_target = high >= target
-
-        # Both touched within same candle
+        # Same-candle rule.
         if hit_sl and hit_target:
 
-            if SAME_CANDLE_POLICY == "SL_FIRST":
+            if SAME_CANDLE_RULE == "SL_FIRST":
 
-                exit_price = stop_loss
-                exit_time = row["datetime"]
+                exit_price = stop_price
+                exit_time = candle_time
                 exit_reason = "SL"
+
+                break
 
             else:
 
-                exit_price = target
-                exit_time = row["datetime"]
+                exit_price = target_price
+                exit_time = candle_time
                 exit_reason = "TARGET"
 
-            break
+                break
 
-        # SL only
         if hit_sl:
 
-            exit_price = stop_loss
-            exit_time = row["datetime"]
+            exit_price = stop_price
+            exit_time = candle_time
             exit_reason = "SL"
+
             break
 
-        # Target only
         if hit_target:
 
-            exit_price = target
-            exit_time = row["datetime"]
+            exit_price = target_price
+            exit_time = candle_time
             exit_reason = "TARGET"
+
             break
 
-    # --------------------------------------------------------
-    # No explicit exit found -> use last available candle
-    # --------------------------------------------------------
+        if candle_minutes >= FORCE_EXIT_MINUTES:
+
+            exit_price = candle["close"]
+            exit_time = candle_time
+            exit_reason = "EOD"
+
+            break
 
     if exit_price is None:
 
-        last = after_entry.iloc[-1]
+        last_candle = session[-1]
 
-        close = safe_float(last["close"])
+        exit_price = last_candle["close"]
+        exit_time = last_candle["datetime"]
+        exit_reason = "EOD"
 
-        if close is None:
-            return None
-
-        exit_price = close
-        exit_time = last["datetime"]
-        exit_reason = "LAST_CANDLE"
-
-    # --------------------------------------------------------
-    # P&L
-    # --------------------------------------------------------
-
-    gross_pnl = exit_price - entry_price
-
-    pnl_percent = (
-        gross_pnl / entry_price
-    ) * 100.0
-
-    return Trade(
-        trade_date=trade_date.strftime("%Y-%m-%d"),
-        option_type=option_type,
-        symbol=symbol,
-        expiry=expiry.strftime("%Y-%m-%d"),
-        strike=strike,
-
-        option_open=option_open,
-
-        entry_price=entry_price,
-        stop_loss=stop_loss,
-        target=target,
-
-        entry_time=entry_time.strftime(
-            "%Y-%m-%d %H:%M:%S"
-        ) if entry_time else None,
-
-        exit_time=exit_time.strftime(
-            "%Y-%m-%d %H:%M:%S"
-        ) if exit_time else None,
-
-        exit_price=exit_price,
-        exit_reason=exit_reason,
-
-        quantity=1,
-
-        gross_pnl=gross_pnl,
-        pnl_percent=pnl_percent,
-
-        underlying_open=underlying_open
+    points = (
+        exit_price
+        - entry_price
     )
+
+    pnl = (
+        points
+        * QUANTITY
+    )
+
+    if pnl > 0:
+        outcome = "WIN"
+
+    elif pnl < 0:
+        outcome = "LOSS"
+
+    else:
+        outcome = "BREAKEVEN"
+
+    return {
+        "Date": trading_date,
+        "Expiry": expiry,
+        "ATM Strike": atm_strike,
+        "Underlying Open": underlying_open,
+        "Option Type": option_type,
+        "Symbol": symbol,
+        "Option Open": option_open,
+        "Entry Price": entry_price,
+        "Stop Price": stop_price,
+        "Target Price": target_price,
+        "Entry Time": entry_time,
+        "Exit Time": exit_time,
+        "Exit Price": exit_price,
+        "Exit Reason": exit_reason,
+        "Outcome": outcome,
+        "Points": points,
+        "Quantity": QUANTITY,
+        "P&L": pnl
+    }
 
 
 # ============================================================
-# DISCOVER EXPIRY FROM CONTRACT DATA
+# TRADE BUILDER
 # ============================================================
 
-def discover_expiry_for_day(
-    trade_date: date,
-    expiry_cache: Dict[date, date],
-    known_expiries: List[date]
-) -> Optional[date]:
+def build_trade_for_day(
+    trading_date,
+    expiry,
+    underlying_candles
+):
 
-    """
-    Use cached expiry dates where possible.
+    if not underlying_candles:
+        return None
 
-    If direct expiry discovery did not return anything, we make
-    a best-effort search by trying the next several Thursdays.
-
-    This fallback exists because FYERS SDK versions differ in
-    how expiry-date discovery is exposed.
-    """
-
-    if trade_date in expiry_cache:
-        return expiry_cache[trade_date]
-
-    expiry = find_nearest_weekly_expiry(
-        trade_date,
-        known_expiries
+    session = filter_session_candles(
+        underlying_candles
     )
 
-    if expiry is not None:
+    if not session:
+        return None
 
-        expiry_cache[trade_date] = expiry
+    underlying_open = session[0]["open"]
 
-        return expiry
+    contracts = load_contracts_for_expiry(
+        expiry
+    )
 
-    # --------------------------------------------------------
-    # Fallback:
-    # Try next 7 calendar days for an expiry.
-    # --------------------------------------------------------
+    atm_strike, ce_symbol, pe_symbol = (
+        get_atm_option_symbols(
+            contracts,
+            expiry,
+            underlying_open
+        )
+    )
 
-    for offset in range(0, 8):
+    ce_candles = get_option_day_data(
+        ce_symbol,
+        trading_date
+    )
 
-        candidate = (
-            trade_date +
-            timedelta(days=offset)
+    pe_candles = get_option_day_data(
+        pe_symbol,
+        trading_date
+    )
+
+    # No-data from either leg means we cannot construct
+    # the required CE/PE trade for that day.
+    if not ce_candles:
+        return None
+
+    if not pe_candles:
+        return None
+
+    ce_trade = simulate_trade(
+        trading_date=trading_date,
+        expiry=expiry,
+        underlying_open=underlying_open,
+        atm_strike=atm_strike,
+        option_type="CE",
+        symbol=ce_symbol,
+        candles=ce_candles
+    )
+
+    pe_trade = simulate_trade(
+        trading_date=trading_date,
+        expiry=expiry,
+        underlying_open=underlying_open,
+        atm_strike=atm_strike,
+        option_type="PE",
+        symbol=pe_symbol,
+        candles=pe_candles
+    )
+
+    # Existing strategy evaluates the two option legs
+    # independently. Return both trades that actually trigger.
+    trades = []
+
+    if ce_trade is not None:
+        trades.append(ce_trade)
+
+    if pe_trade is not None:
+        trades.append(pe_trade)
+
+    return trades
+
+
+# ============================================================
+# DATAFRAME BUILDERS
+# ============================================================
+
+def build_trades_dataframe(trades):
+
+    columns = [
+        "Date",
+        "Expiry",
+        "ATM Strike",
+        "Underlying Open",
+        "Option Type",
+        "Symbol",
+        "Option Open",
+        "Entry Price",
+        "Stop Price",
+        "Target Price",
+        "Entry Time",
+        "Exit Time",
+        "Exit Price",
+        "Exit Reason",
+        "Outcome",
+        "Points",
+        "Quantity",
+        "P&L"
+    ]
+
+    if not trades:
+        return pd.DataFrame(
+            columns=columns
         )
 
-        # Weekly NIFTY expiry is normally Thursday.
-        # We don't hard-code this as the only condition because
-        # exchange calendars/holidays can move the actual expiry.
-        if candidate.weekday() != 3:
-            continue
+    df = pd.DataFrame(
+        trades
+    )
 
-        try:
-
-            contracts = get_contracts_for_expiry(
-                trade_date,
-                candidate
+    for column in [
+        "Date",
+        "Expiry",
+        "Entry Time",
+        "Exit Time"
+    ]:
+        if column in df.columns:
+            df[column] = pd.to_datetime(
+                df[column]
             )
 
-            if contracts:
-
-                expiry_cache[trade_date] = candidate
-
-                return candidate
-
-        except Exception as exc:
-
-            print(
-                f"Expiry fallback failed for "
-                f"{candidate}: {exc}"
-            )
-
-    return None
+    return df[columns]
 
 
-# ============================================================
-# EXCEL REPORT
-# ============================================================
+def build_daily_summary(trades_df):
 
-def make_statistics(
-    trades_df: pd.DataFrame
-) -> pd.DataFrame:
+    if trades_df.empty:
+        return pd.DataFrame()
+
+    grouped = (
+        trades_df
+        .groupby("Date", as_index=False)
+        .agg(
+            Trades=("P&L", "count"),
+            Wins=(
+                "Outcome",
+                lambda x: (x == "WIN").sum()
+            ),
+            Losses=(
+                "Outcome",
+                lambda x: (x == "LOSS").sum()
+            ),
+            Breakeven=(
+                "Outcome",
+                lambda x: (x == "BREAKEVEN").sum()
+            ),
+            PnL=("P&L", "sum")
+        )
+    )
+
+    grouped["Win Rate %"] = (
+        grouped["Wins"]
+        / grouped["Trades"]
+        * 100
+    )
+
+    return grouped
+
+
+def build_monthly_summary(trades_df):
+
+    if trades_df.empty:
+        return pd.DataFrame()
+
+    temp = trades_df.copy()
+
+    temp["Month"] = (
+        pd.to_datetime(
+            temp["Date"]
+        ).dt.to_period("M")
+        .astype(str)
+    )
+
+    grouped = (
+        temp
+        .groupby("Month", as_index=False)
+        .agg(
+            Trades=("P&L", "count"),
+            Wins=(
+                "Outcome",
+                lambda x: (x == "WIN").sum()
+            ),
+            Losses=(
+                "Outcome",
+                lambda x: (x == "LOSS").sum()
+            ),
+            Breakeven=(
+                "Outcome",
+                lambda x: (x == "BREAKEVEN").sum()
+            ),
+            PnL=("P&L", "sum")
+        )
+    )
+
+    grouped["Win Rate %"] = (
+        grouped["Wins"]
+        / grouped["Trades"]
+        * 100
+    )
+
+    return grouped
+
+
+def build_exit_summary(trades_df):
+
+    if trades_df.empty:
+        return pd.DataFrame()
+
+    grouped = (
+        trades_df
+        .groupby(
+            "Exit Reason",
+            as_index=False
+        )
+        .agg(
+            Trades=("P&L", "count"),
+            Wins=(
+                "Outcome",
+                lambda x: (x == "WIN").sum()
+            ),
+            Losses=(
+                "Outcome",
+                lambda x: (x == "LOSS").sum()
+            ),
+            PnL=("P&L", "sum")
+        )
+    )
+
+    grouped["Win Rate %"] = (
+        grouped["Wins"]
+        / grouped["Trades"]
+        * 100
+    )
+
+    return grouped
+
+
+def build_statistics(trades_df):
 
     if trades_df.empty:
 
         return pd.DataFrame({
             "Metric": [
-                "Total Trades"
+                "Trades",
+                "Wins",
+                "Losses",
+                "Breakeven",
+                "Win Rate %",
+                "Gross Profit",
+                "Gross Loss",
+                "Net P&L",
+                "Average Win",
+                "Average Loss"
             ],
             "Value": [
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
                 0
             ]
         })
 
-    pnl = trades_df["gross_pnl"]
+    wins = (
+        trades_df[
+            trades_df["Outcome"] == "WIN"
+        ]
+    )
 
-    wins = trades_df[
-        trades_df["gross_pnl"] > 0
-    ]
+    losses = (
+        trades_df[
+            trades_df["Outcome"] == "LOSS"
+        ]
+    )
 
-    losses = trades_df[
-        trades_df["gross_pnl"] < 0
-    ]
+    total = len(trades_df)
 
-    total_trades = len(trades_df)
+    win_count = len(wins)
+    loss_count = len(losses)
+    breakeven_count = (
+        trades_df["Outcome"] == "BREAKEVEN"
+    ).sum()
 
-    win_rate = (
-        len(wins) / total_trades * 100
-        if total_trades
+    gross_profit = (
+        wins["P&L"].sum()
+        if not wins.empty
         else 0
     )
 
-    gross_profit = wins["gross_pnl"].sum()
-
-    gross_loss = abs(
-        losses["gross_pnl"].sum()
+    gross_loss = (
+        losses["P&L"].sum()
+        if not losses.empty
+        else 0
     )
 
-    profit_factor = (
-        gross_profit / gross_loss
-        if gross_loss > 0
-        else float("inf")
+    net_pnl = trades_df["P&L"].sum()
+
+    win_rate = (
+        win_count
+        / total
+        * 100
+        if total
+        else 0
     )
 
-    cumulative = pnl.cumsum()
-
-    running_max = cumulative.cummax()
-
-    drawdown = cumulative - running_max
-
-    max_drawdown = drawdown.min()
-
-    stats = [
-        ("Total Trades", total_trades),
-
-        ("Winning Trades", len(wins)),
-
-        ("Losing Trades", len(losses)),
-
-        ("Win Rate %", win_rate),
-
-        ("Total P&L", pnl.sum()),
-
-        ("Average Trade P&L", pnl.mean()),
-
-        ("Median Trade P&L", pnl.median()),
-
-        ("Average Winner",
-         wins["gross_pnl"].mean()
-         if not wins.empty else 0),
-
-        ("Average Loser",
-         losses["gross_pnl"].mean()
-         if not losses.empty else 0),
-
-        ("Largest Winner",
-         pnl.max()),
-
-        ("Largest Loser",
-         pnl.min()),
-
-        ("Gross Profit",
-         gross_profit),
-
-        ("Gross Loss",
-         -gross_loss),
-
-        ("Profit Factor",
-         profit_factor),
-
-        ("Max Drawdown",
-         max_drawdown),
-
-        ("Total Return on Entry Premium",
-         (
-             pnl.sum() /
-             trades_df["entry_price"].sum() *
-             100
-         )
-         if trades_df["entry_price"].sum() != 0
-         else 0
-        )
-    ]
-
-    return pd.DataFrame(
-        stats,
-        columns=["Metric", "Value"]
+    avg_win = (
+        wins["P&L"].mean()
+        if not wins.empty
+        else 0
     )
 
-
-def make_daily_summary(
-    trades_df: pd.DataFrame
-) -> pd.DataFrame:
-
-    if trades_df.empty:
-        return pd.DataFrame()
-
-    summary = (
-        trades_df
-        .groupby("trade_date")
-        .agg(
-            Trades=("gross_pnl", "count"),
-            PnL=("gross_pnl", "sum"),
-            Winners=(
-                "gross_pnl",
-                lambda x: (x > 0).sum()
-            ),
-            Losers=(
-                "gross_pnl",
-                lambda x: (x < 0).sum()
-            ),
-            CE_PnL=(
-                "gross_pnl",
-                lambda x: 0
-            )
-        )
-        .reset_index()
+    avg_loss = (
+        losses["P&L"].mean()
+        if not losses.empty
+        else 0
     )
 
-    # Proper CE/PE breakdown
-    ce = (
-        trades_df[
-            trades_df["option_type"] == "CE"
+    return pd.DataFrame({
+        "Metric": [
+            "Trades",
+            "Wins",
+            "Losses",
+            "Breakeven",
+            "Win Rate %",
+            "Gross Profit",
+            "Gross Loss",
+            "Net P&L",
+            "Average Win",
+            "Average Loss"
+        ],
+        "Value": [
+            total,
+            win_count,
+            loss_count,
+            int(breakeven_count),
+            win_rate,
+            gross_profit,
+            gross_loss,
+            net_pnl,
+            avg_win,
+            avg_loss
         ]
-        .groupby("trade_date")["gross_pnl"]
-        .sum()
-        .rename("CE_PnL")
-    )
+    })
 
-    pe = (
-        trades_df[
-            trades_df["option_type"] == "PE"
+
+def build_parameters():
+
+    return pd.DataFrame({
+        "Parameter": [
+            "Start Date",
+            "End Date",
+            "Underlying",
+            "Entry Multiplier",
+            "Stop Multiplier",
+            "Target Multiplier",
+            "Last Entry Time",
+            "Force Exit Time",
+            "Quantity",
+            "Same Candle Rule",
+            "API Sleep Seconds",
+            "Max 429 Retries",
+            "Initial 429 Backoff",
+            "Max 429 Backoff"
+        ],
+        "Value": [
+            START_DATE,
+            END_DATE,
+            UNDERLYING,
+            ENTRY_MULTIPLIER,
+            STOP_MULTIPLIER,
+            TARGET_MULTIPLIER,
+            LAST_ENTRY_TIME,
+            FORCE_EXIT_TIME,
+            QUANTITY,
+            SAME_CANDLE_RULE,
+            API_SLEEP_SECONDS,
+            MAX_429_RETRIES,
+            INITIAL_429_BACKOFF,
+            MAX_429_BACKOFF
         ]
-        .groupby("trade_date")["gross_pnl"]
-        .sum()
-        .rename("PE_PnL")
-    )
-
-    summary = summary.drop(
-        columns=["CE_PnL"]
-    )
-
-    summary = summary.merge(
-        ce,
-        on="trade_date",
-        how="left"
-    )
-
-    summary = summary.merge(
-        pe,
-        on="trade_date",
-        how="left"
-    )
-
-    summary[
-        ["CE_PnL", "PE_PnL"]
-    ] = summary[
-        ["CE_PnL", "PE_PnL"]
-    ].fillna(0)
-
-    summary["Cumulative_PnL"] = (
-        summary["PnL"].cumsum()
-    )
-
-    return summary
+    })
 
 
-def make_exit_summary(
-    trades_df: pd.DataFrame
-) -> pd.DataFrame:
+def build_error_dataframe():
 
-    if trades_df.empty:
-        return pd.DataFrame()
-
-    result = (
-        trades_df
-        .groupby(
-            ["option_type", "exit_reason"]
-        )
-        .agg(
-            Trades=("gross_pnl", "count"),
-            PnL=("gross_pnl", "sum"),
-            Avg_PnL=("gross_pnl", "mean")
-        )
-        .reset_index()
-    )
-
-    return result
-
-
-def write_excel_report(
-    trades: List[Trade],
-    daily_summary: pd.DataFrame,
-    errors: List[dict],
-    output_file: str
-):
-
-    trades_df = pd.DataFrame(
-        [t.__dict__ for t in trades]
-    )
-
-    statistics = make_statistics(
-        trades_df
-    )
-
-    exit_summary = make_exit_summary(
-        trades_df
-    )
-
-    parameters = pd.DataFrame([
-        ("Instrument", "NIFTY"),
-        ("Underlying", UNDERLYING),
-        ("Backtest Start", START_DATE),
-        ("Backtest End", END_DATE),
-        ("Expiry Rule", "Nearest weekly expiry available"),
-        ("ATM Rule", "Strike closest to 09:15 NIFTY open"),
-        ("Option Open", "09:15 option candle open"),
-        ("Entry Multiple", ENTRY_MULTIPLE),
-        ("SL Multiple", SL_MULTIPLE),
-        ("Target Multiple", TARGET_MULTIPLE),
-        ("Entry Cutoff", ENTRY_CUTOFF.strftime("%H:%M")),
-        ("Force Exit", FORCE_EXIT_TIME.strftime("%H:%M")),
-        ("Same Candle Policy", SAME_CANDLE_POLICY),
-        ("Resolution", "1 minute"),
-        ("Quantity", 1),
-        ("P&L Model", "Points x quantity"),
-        ("Brokerage/Taxes", "NOT INCLUDED"),
-    ], columns=["Parameter", "Value"])
-
-    errors_df = pd.DataFrame(errors)
-
-    if errors_df.empty:
-        errors_df = pd.DataFrame(
+    if not errors:
+        return pd.DataFrame(
             columns=[
-                "trade_date",
-                "stage",
-                "message"
+                "Date",
+                "Stage",
+                "Error"
             ]
         )
 
-    with pd.ExcelWriter(
-        output_file,
-        engine="openpyxl"
-    ) as writer:
-
-        parameters.to_excel(
-            writer,
-            sheet_name="Parameters",
-            index=False
-        )
-
-        statistics.to_excel(
-            writer,
-            sheet_name="Statistics",
-            index=False
-        )
-
-        if not trades_df.empty:
-
-            trades_df.to_excel(
-                writer,
-                sheet_name="Trades",
-                index=False
-            )
-
-        if not daily_summary.empty:
-
-            daily_summary.to_excel(
-                writer,
-                sheet_name="Daily Summary",
-                index=False
-            )
-
-        if not exit_summary.empty:
-
-            exit_summary.to_excel(
-                writer,
-                sheet_name="Exit Summary",
-                index=False
-            )
-
-        errors_df.to_excel(
-            writer,
-            sheet_name="Errors",
-            index=False
-        )
-
-    # --------------------------------------------------------
-    # Formatting
-    # --------------------------------------------------------
-
-    from openpyxl import load_workbook
-    from openpyxl.styles import Font
-    from openpyxl.utils import get_column_letter
-
-    wb = load_workbook(
-        output_file
+    return pd.DataFrame(
+        errors,
+        columns=[
+            "Date",
+            "Stage",
+            "Error"
+        ]
     )
 
-    for ws in wb.worksheets:
 
-        # Header
+def build_daily_metadata():
+
+    rows = []
+
+    for key, candles in underlying_cache.items():
+
+        rows.append({
+            "Date": key,
+            "Underlying Candles": len(candles)
+        })
+
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "Date",
+                "Underlying Candles"
+            ]
+        )
+
+    return pd.DataFrame(rows)
+
+
+# ============================================================
+# EXCEL WRITER
+# ============================================================
+
+def write_excel(
+    trades_df,
+    statistics_df,
+    daily_summary_df,
+    monthly_summary_df,
+    exit_summary_df,
+    daily_metadata_df,
+    errors_df
+):
+
+    print_progress("")
+    print_progress("WRITING EXCEL")
+
+    parameters_df = build_parameters()
+
+    wb = Workbook()
+
+    default_sheet = wb.active
+    wb.remove(default_sheet)
+
+    sheets = [
+        (
+            "Parameters",
+            parameters_df
+        ),
+        (
+            "Statistics",
+            statistics_df
+        ),
+        (
+            "Trades",
+            trades_df
+        ),
+        (
+            "Daily Summary",
+            daily_summary_df
+        ),
+        (
+            "Monthly Summary",
+            monthly_summary_df
+        ),
+        (
+            "Exit Summary",
+            exit_summary_df
+        ),
+        (
+            "Daily Metadata",
+            daily_metadata_df
+        ),
+        (
+            "Errors",
+            errors_df
+        )
+    ]
+
+    for sheet_name, df in sheets:
+
+        ws = wb.create_sheet(
+            title=sheet_name
+        )
+
+        if df is None or df.empty:
+            ws.append(
+                list(df.columns)
+                if df is not None
+                else []
+            )
+            continue
+
+        ws.append(
+            list(df.columns)
+        )
+
         for cell in ws[1]:
             cell.font = Font(
                 bold=True
             )
 
-        # Freeze header
+        for row in df.itertuples(
+            index=False,
+            name=None
+        ):
+            ws.append(
+                list(row)
+            )
+
         ws.freeze_panes = "A2"
 
-        # Auto-width
+        # Basic column sizing.
         for column_cells in ws.columns:
 
             max_length = 0
 
-            column_letter = get_column_letter(
-                column_cells[0].column
+            column_letter = (
+                column_cells[0]
+                .column_letter
             )
 
             for cell in column_cells:
@@ -1538,12 +1580,16 @@ def write_excel_report(
             ws.column_dimensions[
                 column_letter
             ].width = min(
-                max_length + 2,
-                45
+                max(max_length + 2, 10),
+                60
             )
 
     wb.save(
-        output_file
+        OUTPUT_FILE
+    )
+
+    print_progress(
+        f"Excel saved: {OUTPUT_FILE}"
     )
 
 
@@ -1551,463 +1597,479 @@ def write_excel_report(
 # MAIN BACKTEST
 # ============================================================
 
-def run_backtest():
+def main():
 
-    start_date = datetime.strptime(
-        START_DATE,
-        "%Y-%m-%d"
-    ).date()
-
-    end_date = datetime.strptime(
-        END_DATE,
-        "%Y-%m-%d"
-    ).date()
-
-    print("=" * 70)
-    print("NIFTY 2X OPTION BACKTEST")
-    print("=" * 70)
-
-    print(
-        f"Period: {start_date} -> {end_date}"
+    start = parse_date(
+        START_DATE
     )
 
-    print(
-        f"Entry: {ENTRY_MULTIPLE}x option open"
+    end = parse_date(
+        END_DATE
     )
 
-    print(
-        f"SL: {SL_MULTIPLE}x option open"
-    )
+    # Load expiry data once.
+    expiries = load_all_option_expiries()
 
-    print(
-        f"Target: {TARGET_MULTIPLE}x option open"
-    )
+    all_trades = []
 
-    print(
-        f"Same candle: {SAME_CANDLE_POLICY}"
-    )
+    current = start
 
-    print("=" * 70)
+    total_days = (
+        end - start
+    ).days + 1
 
-    # --------------------------------------------------------
-    # Step 1: NIFTY opens
-    # --------------------------------------------------------
+    counter = 0
 
-    underlying = get_underlying_history(
-        start_date,
-        end_date
-    )
+    while current <= end:
 
-    print(
-        f"\nTrading days found: {len(underlying)}"
-    )
+        counter += 1
 
-    # --------------------------------------------------------
-    # Step 2: Discover expiry dates
-    # --------------------------------------------------------
-
-    print(
-        "\nDiscovering available expiry dates..."
-    )
-
-    known_expiries = get_expiry_dates(
-        UNDERLYING,
-        start_date,
-        end_date
-    )
-
-    print(
-        f"Expiry dates discovered: "
-        f"{len(known_expiries)}"
-    )
-
-    # --------------------------------------------------------
-    # Step 3: Process every day
-    # --------------------------------------------------------
-
-    trades: List[Trade] = []
-
-    errors: List[dict] = []
-
-    expiry_cache: Dict[date, date] = {}
-
-    contract_cache: Dict[
-        date,
-        Dict[float, Dict[str, str]]
-    ] = {}
-
-    processed = 0
-
-    for _, day_row in underlying.iterrows():
-
-        trade_date = day_row["date"]
-
-        underlying_open = safe_float(
-            day_row["open"]
+        print_progress(
+            f"[{counter}/{total_days}] "
+            f"{current}"
         )
 
-        if underlying_open is None:
+        # Monday-Friday only.
+        if current.weekday() >= 5:
+            current += timedelta(
+                days=1
+            )
             continue
 
-        print(
-            "\n"
-            + "-" * 70
-        )
-
-        print(
-            f"{trade_date} | "
-            f"NIFTY Open = {underlying_open:.2f}"
-        )
-
         # ----------------------------------------------------
-        # Expiry
+        # UNDERLYING
         # ----------------------------------------------------
 
         try:
 
-            expiry = discover_expiry_for_day(
-                trade_date,
-                expiry_cache,
-                known_expiries
-            )
-
-            if expiry is None:
-
-                msg = (
-                    "Could not determine nearest "
-                    "weekly expiry."
+            underlying_candles = (
+                get_underlying_day_data(
+                    current
                 )
-
-                print(
-                    "SKIP:",
-                    msg
-                )
-
-                errors.append({
-                    "trade_date": trade_date,
-                    "stage": "expiry",
-                    "message": msg
-                })
-
-                continue
-
-            print(
-                f"Expiry = {expiry}"
             )
 
         except Exception as exc:
 
-            print(
-                "Expiry error:",
-                exc
+            record_error(
+                current,
+                "UNDERLYING",
+                str(exc)
             )
 
-            errors.append({
-                "trade_date": trade_date,
-                "stage": "expiry",
-                "message": str(exc)
-            })
+            current += timedelta(
+                days=1
+            )
+
+            continue
+
+        # FYERS no_data.
+        # This can happen on exchange holidays or days where
+        # data isn't available.
+        if not underlying_candles:
+
+            current += timedelta(
+                days=1
+            )
 
             continue
 
         # ----------------------------------------------------
-        # Contract discovery
+        # EXPIRY
         # ----------------------------------------------------
 
         try:
 
-            if expiry not in contract_cache:
+            expiry = get_expiry_for_trading_date(
+                current
+            )
 
-                print(
-                    "Downloading option contracts..."
-                )
+        except Exception as exc:
 
-                contracts = get_contracts_for_expiry(
-                    trade_date,
-                    expiry
-                )
+            record_error(
+                current,
+                "EXPIRY",
+                str(exc)
+            )
 
-                contract_cache[expiry] = (
-                    build_contract_map(
-                        contracts
-                    )
-                )
+            current += timedelta(
+                days=1
+            )
 
-                time.sleep(
-                    API_SLEEP_SECONDS
-                )
+            continue
 
-            contract_map = contract_cache[
+        # ----------------------------------------------------
+        # CONTRACTS
+        # ----------------------------------------------------
+
+        try:
+
+            contracts = load_contracts_for_expiry(
                 expiry
-            ]
+            )
 
         except Exception as exc:
 
-            print(
-                "Contract error:",
-                exc
+            record_error(
+                current,
+                "CONTRACTS",
+                str(exc)
             )
 
-            errors.append({
-                "trade_date": trade_date,
-                "stage": "contracts",
-                "message": str(exc)
-            })
-
-            continue
-
-        if not contract_map:
-
-            errors.append({
-                "trade_date": trade_date,
-                "stage": "contracts",
-                "message": "No option contracts found."
-            })
+            current += timedelta(
+                days=1
+            )
 
             continue
 
         # ----------------------------------------------------
-        # ATM strike
+        # UNDERLYING OPEN
         # ----------------------------------------------------
 
-        strikes = sorted(
-            contract_map.keys()
+        underlying_session = (
+            filter_session_candles(
+                underlying_candles
+            )
         )
 
-        strike = nearest_strike(
-            underlying_open,
-            strikes
-        )
+        if not underlying_session:
 
-        option_contracts = contract_map.get(
-            strike,
-            {}
-        )
+            current += timedelta(
+                days=1
+            )
 
-        ce_symbol = option_contracts.get(
-            "CE"
-        )
+            continue
 
-        pe_symbol = option_contracts.get(
-            "PE"
-        )
-
-        print(
-            f"ATM Strike = {strike}"
-        )
-
-        print(
-            f"CE = {ce_symbol}"
-        )
-
-        print(
-            f"PE = {pe_symbol}"
+        underlying_open = (
+            underlying_session[0]["open"]
         )
 
         # ----------------------------------------------------
-        # CE
+        # ATM
         # ----------------------------------------------------
 
-        if ce_symbol:
+        try:
+
+            (
+                atm_strike,
+                ce_symbol,
+                pe_symbol
+            ) = get_atm_option_symbols(
+                contracts,
+                expiry,
+                underlying_open
+            )
+
+        except Exception as exc:
+
+            record_error(
+                current,
+                "ATM",
+                str(exc)
+            )
+
+            current += timedelta(
+                days=1
+            )
+
+            continue
+
+        # ----------------------------------------------------
+        # CE DATA
+        # ----------------------------------------------------
+
+        try:
+
+            ce_candles = get_option_day_data(
+                ce_symbol,
+                current
+            )
+
+        except Exception as exc:
+
+            record_error(
+                current,
+                "CE_DATA",
+                str(exc)
+            )
+
+            ce_candles = []
+
+        # ----------------------------------------------------
+        # PE DATA
+        # ----------------------------------------------------
+
+        try:
+
+            pe_candles = get_option_day_data(
+                pe_symbol,
+                current
+            )
+
+        except Exception as exc:
+
+            record_error(
+                current,
+                "PE_DATA",
+                str(exc)
+            )
+
+            pe_candles = []
+
+        # ----------------------------------------------------
+        # SIMULATE CE
+        # ----------------------------------------------------
+
+        if ce_candles:
 
             try:
 
-                print(
-                    "Downloading CE..."
+                ce_trade = simulate_trade(
+                    trading_date=current,
+                    expiry=expiry,
+                    underlying_open=underlying_open,
+                    atm_strike=atm_strike,
+                    option_type="CE",
+                    symbol=ce_symbol,
+                    candles=ce_candles
                 )
 
-                ce_df = get_option_history(
-                    ce_symbol,
-                    trade_date
-                )
-
-                trade = backtest_option(
-                    ce_df,
-                    trade_date,
-                    "CE",
-                    ce_symbol,
-                    expiry,
-                    strike,
-                    underlying_open
-                )
-
-                if trade:
-
-                    trades.append(
-                        trade
-                    )
-
-                    print(
-                        f"CE TRADE: "
-                        f"open={trade.option_open:.2f}, "
-                        f"entry={trade.entry_price:.2f}, "
-                        f"exit={trade.exit_price:.2f}, "
-                        f"{trade.exit_reason}, "
-                        f"P&L={trade.gross_pnl:.2f}"
-                    )
-
-                else:
-
-                    print(
-                        "CE: no trade"
+                if ce_trade is not None:
+                    all_trades.append(
+                        ce_trade
                     )
 
             except Exception as exc:
 
-                print(
-                    "CE error:",
-                    exc
+                record_error(
+                    current,
+                    "CE_TRADE",
+                    str(exc)
                 )
 
-                errors.append({
-                    "trade_date": trade_date,
-                    "stage": "CE",
-                    "message": str(exc)
-                })
-
         # ----------------------------------------------------
-        # PE
+        # SIMULATE PE
         # ----------------------------------------------------
 
-        if pe_symbol:
+        if pe_candles:
 
             try:
 
-                print(
-                    "Downloading PE..."
+                pe_trade = simulate_trade(
+                    trading_date=current,
+                    expiry=expiry,
+                    underlying_open=underlying_open,
+                    atm_strike=atm_strike,
+                    option_type="PE",
+                    symbol=pe_symbol,
+                    candles=pe_candles
                 )
 
-                pe_df = get_option_history(
-                    pe_symbol,
-                    trade_date
-                )
-
-                trade = backtest_option(
-                    pe_df,
-                    trade_date,
-                    "PE",
-                    pe_symbol,
-                    expiry,
-                    strike,
-                    underlying_open
-                )
-
-                if trade:
-
-                    trades.append(
-                        trade
-                    )
-
-                    print(
-                        f"PE TRADE: "
-                        f"open={trade.option_open:.2f}, "
-                        f"entry={trade.entry_price:.2f}, "
-                        f"exit={trade.exit_price:.2f}, "
-                        f"{trade.exit_reason}, "
-                        f"P&L={trade.gross_pnl:.2f}"
-                    )
-
-                else:
-
-                    print(
-                        "PE: no trade"
+                if pe_trade is not None:
+                    all_trades.append(
+                        pe_trade
                     )
 
             except Exception as exc:
 
-                print(
-                    "PE error:",
-                    exc
+                record_error(
+                    current,
+                    "PE_TRADE",
+                    str(exc)
                 )
 
-                errors.append({
-                    "trade_date": trade_date,
-                    "stage": "PE",
-                    "message": str(exc)
-                })
-
-        processed += 1
-
-        print(
-            f"Progress: {processed}/{len(underlying)}"
+        current += timedelta(
+            days=1
         )
 
-    # --------------------------------------------------------
-    # Results
-    # --------------------------------------------------------
+    # ========================================================
+    # BUILD OUTPUT
+    # ========================================================
 
-    trades_df = pd.DataFrame(
-        [t.__dict__ for t in trades]
+    trades_df = build_trades_dataframe(
+        all_trades
     )
 
-    daily_summary = make_daily_summary(
+    statistics_df = build_statistics(
         trades_df
     )
 
-    # --------------------------------------------------------
-    # Write Excel
-    # --------------------------------------------------------
-
-    print(
-        "\nWriting Excel report..."
+    daily_summary_df = build_daily_summary(
+        trades_df
     )
 
-    write_excel_report(
-        trades,
-        daily_summary,
-        errors,
-        OUTPUT_FILE
+    monthly_summary_df = build_monthly_summary(
+        trades_df
     )
 
-    # --------------------------------------------------------
-    # Print final summary
-    # --------------------------------------------------------
-
-    print(
-        "\n"
-        + "=" * 70
+    exit_summary_df = build_exit_summary(
+        trades_df
     )
 
-    print(
-        "BACKTEST COMPLETE"
-    )
+    daily_metadata_df = build_daily_metadata()
 
-    print(
-        "=" * 70
-    )
+    errors_df = build_error_dataframe()
 
-    if trades_df.empty:
+    # ========================================================
+    # ERROR SUMMARY
+    # ========================================================
 
-        print(
-            "No trades were generated."
+    print_progress("")
+    print_progress("ERROR SUMMARY")
+    print_progress("----------------")
+
+    if errors_df.empty:
+
+        print_progress(
+            "No errors."
         )
 
     else:
 
-        statistics = make_statistics(
+        error_counts = (
+            errors_df["Stage"]
+            .value_counts()
+        )
+
+        for stage, count in error_counts.items():
+
+            print_progress(
+                f"{stage}: {count}"
+            )
+
+        print_progress(
+            f"Total errors: {len(errors_df)}"
+        )
+
+    # ========================================================
+    # BACKTEST RESULTS
+    # ========================================================
+
+    print_progress("")
+    print_progress("BACKTEST RESULTS")
+    print_progress("----------------")
+
+    if trades_df.empty:
+
+        print_progress(
+            "Trades       : 0"
+        )
+
+    else:
+
+        wins = int(
+            (
+                trades_df["Outcome"]
+                == "WIN"
+            ).sum()
+        )
+
+        losses = int(
+            (
+                trades_df["Outcome"]
+                == "LOSS"
+            ).sum()
+        )
+
+        breakeven = int(
+            (
+                trades_df["Outcome"]
+                == "BREAKEVEN"
+            ).sum()
+        )
+
+        total_trades = len(
             trades_df
         )
 
-        for _, row in statistics.iterrows():
-
-            print(
-                f"{row['Metric']}: "
-                f"{row['Value']}"
-            )
-
-    print(
-        "\nExcel report:"
-    )
-
-    print(
-        os.path.abspath(
-            OUTPUT_FILE
+        win_rate = (
+            wins
+            / total_trades
+            * 100
         )
+
+        gross_profit = trades_df.loc[
+            trades_df["P&L"] > 0,
+            "P&L"
+        ].sum()
+
+        gross_loss = trades_df.loc[
+            trades_df["P&L"] < 0,
+            "P&L"
+        ].sum()
+
+        net_pnl = trades_df[
+            "P&L"
+        ].sum()
+
+        print_progress(
+            f"Trades       : {total_trades}"
+        )
+
+        print_progress(
+            f"Wins         : {wins}"
+        )
+
+        print_progress(
+            f"Losses       : {losses}"
+        )
+
+        print_progress(
+            f"Breakeven    : {breakeven}"
+        )
+
+        print_progress(
+            f"Win Rate     : {win_rate:.2f}%"
+        )
+
+        print_progress(
+            f"Gross Profit : {gross_profit:.2f}"
+        )
+
+        print_progress(
+            f"Gross Loss   : {gross_loss:.2f}"
+        )
+
+        print_progress(
+            f"Net P&L      : {net_pnl:.2f}"
+        )
+
+    # ========================================================
+    # WRITE EXCEL
+    # ========================================================
+
+    write_excel(
+        trades_df=trades_df,
+        statistics_df=statistics_df,
+        daily_summary_df=daily_summary_df,
+        monthly_summary_df=monthly_summary_df,
+        exit_summary_df=exit_summary_df,
+        daily_metadata_df=daily_metadata_df,
+        errors_df=errors_df
     )
 
-    print(
-        "\nErrors logged:",
-        len(errors)
+    # ========================================================
+    # COMPLETE
+    # ========================================================
+
+    print_progress("")
+    print_progress("=" * 48)
+    print_progress("BACKTEST COMPLETE")
+    print_progress("=" * 48)
+
+    print_progress(
+        f"Trades: {len(trades_df)}"
+    )
+
+    print_progress(
+        f"Errors: {len(errors_df)}"
+    )
+
+    print_progress(
+        f"Expiry dates: {len(expiries)}"
+    )
+
+    print_progress(
+        f"Output: {OUTPUT_FILE}"
     )
 
 
@@ -2016,28 +2078,23 @@ def run_backtest():
 # ============================================================
 
 if __name__ == "__main__":
-
     try:
-
-        run_backtest()
+        main()
 
     except KeyboardInterrupt:
 
-        print(
-            "\nBacktest interrupted by user."
+        print_progress("")
+        print_progress(
+            "BACKTEST INTERRUPTED BY USER"
         )
 
     except Exception as exc:
 
-        print(
-            "\nFATAL ERROR:"
+        print_progress("")
+        print_progress(
+            "FATAL ERROR"
         )
-
-        print(
+        print_progress(
             str(exc)
         )
-
-        traceback.print_exc()
-
-        sys.exit(1)
-
+        raise
