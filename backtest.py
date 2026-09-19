@@ -39,6 +39,17 @@ QUANTITY = 65
 # SL wins.
 SAME_CANDLE_RULE = "SL_FIRST"
 
+# Diagnostic analysis settings.
+# These do NOT change the trading strategy; they only measure trade behavior.
+ENTRY_TIME_BUCKETS = [
+    ("09:15-10:00", 9 * 60 + 15, 10 * 60),
+    ("10:01-11:00", 10 * 60 + 1, 11 * 60),
+    ("11:01-12:00", 11 * 60 + 1, 12 * 60),
+    ("12:01-13:00", 12 * 60 + 1, 13 * 60),
+    ("13:01-14:00", 13 * 60 + 1, 14 * 60),
+    ("14:01-15:00", 14 * 60 + 1, 15 * 60),
+]
+
 OUTPUT_FILE = "NIFTY_2X_Backtest_2024_2025.xlsx"
 
 IST = ZoneInfo("Asia/Kolkata")
@@ -128,6 +139,16 @@ def time_to_minutes(value):
 
 LAST_ENTRY_MINUTES = time_to_minutes(LAST_ENTRY_TIME)
 FORCE_EXIT_MINUTES = time_to_minutes(FORCE_EXIT_TIME)
+
+
+def get_entry_time_bucket(dt):
+    minutes = dt.hour * 60 + dt.minute
+
+    for label, start_minute, end_minute in ENTRY_TIME_BUCKETS:
+        if start_minute <= minutes <= end_minute:
+            return label
+
+    return "OTHER"
 
 
 def candle_timestamp_to_ist(timestamp):
@@ -365,10 +386,9 @@ def get_expiry_for_trading_date(trading_date):
     ]
 
     if not candidates:
-        raise RuntimeError(
-            f"No option expiry on or after "
-            f"{format_date(trading_date)}"
-        )
+        # Normal end-of-range condition: there is no next expiry
+        # available inside the requested FYERS date range.
+        return None
 
     return candidates[0]
 
@@ -847,41 +867,25 @@ def simulate_trade(
     symbol,
     candles
 ):
-
-    session = filter_session_candles(
-        candles
-    )
+    session = filter_session_candles(candles)
 
     if not session:
         return None
 
     first_candle = session[0]
-
     option_open = first_candle["open"]
 
     if option_open <= 0:
         return None
 
-    entry_price = (
-        option_open
-        * ENTRY_MULTIPLIER
-    )
-
-    stop_price = (
-        option_open
-        * STOP_MULTIPLIER
-    )
-
-    target_price = (
-        option_open
-        * TARGET_MULTIPLIER
-    )
+    entry_price = option_open * ENTRY_MULTIPLIER
+    stop_price = option_open * STOP_MULTIPLIER
+    target_price = option_open * TARGET_MULTIPLIER
 
     entry_candle = None
     entry_index = None
 
     for index, candle in enumerate(session):
-
         candle_minutes = (
             candle["datetime"].hour * 60
             + candle["datetime"].minute
@@ -891,7 +895,6 @@ def simulate_trade(
             break
 
         if candle["high"] >= entry_price:
-
             entry_candle = candle
             entry_index = index
             break
@@ -906,11 +909,70 @@ def simulate_trade(
     exit_reason = None
 
     # --------------------------------------------------------
-    # Check candles from entry onward.
+    # Diagnostic tracking.
+    # These measurements start at the actual entry candle.
+    # They do not affect the original exit logic.
     # --------------------------------------------------------
+    post_entry_candles = session[entry_index:]
 
+    max_high = max(c["high"] for c in post_entry_candles)
+    min_low = min(c["low"] for c in post_entry_candles)
+
+    mfe_points = max_high - entry_price
+    mae_points = min_low - entry_price
+
+    risk_points = entry_price - stop_price
+
+    if risk_points > 0:
+        mfe_r = mfe_points / risk_points
+        mae_r = mae_points / risk_points
+    else:
+        mfe_r = None
+        mae_r = None
+
+    mfe_pct = (
+        mfe_points / entry_price * 100
+        if entry_price
+        else None
+    )
+
+    mae_pct = (
+        mae_points / entry_price * 100
+        if entry_price
+        else None
+    )
+
+    max_high_candle = max(
+        post_entry_candles,
+        key=lambda c: (c["high"], -c["timestamp"])
+    )
+
+    min_low_candle = min(
+        post_entry_candles,
+        key=lambda c: (c["low"], c["timestamp"])
+    )
+
+    time_to_mfe_minutes = (
+        max_high_candle["datetime"] - entry_time
+    ).total_seconds() / 60
+
+    time_to_mae_minutes = (
+        min_low_candle["datetime"] - entry_time
+    ).total_seconds() / 60
+
+    reached_25pct = max_high >= entry_price * 1.25
+    reached_50pct = max_high >= entry_price * 1.50
+    reached_75pct = max_high >= entry_price * 1.75
+    reached_100pct = max_high >= entry_price * 2.00
+
+    reached_target = max_high >= target_price
+    reached_stop = min_low <= stop_price
+
+    # --------------------------------------------------------
+    # Original strategy exit logic.
+    # DO NOT CHANGE.
+    # --------------------------------------------------------
     for candle in session[entry_index:]:
-
         candle_time = candle["datetime"]
 
         candle_minutes = (
@@ -918,83 +980,60 @@ def simulate_trade(
             + candle_time.minute
         )
 
-        hit_sl = (
-            candle["low"] <= stop_price
-        )
+        hit_sl = candle["low"] <= stop_price
+        hit_target = candle["high"] >= target_price
 
-        hit_target = (
-            candle["high"] >= target_price
-        )
-
-        # Same-candle rule.
         if hit_sl and hit_target:
-
             if SAME_CANDLE_RULE == "SL_FIRST":
-
                 exit_price = stop_price
                 exit_time = candle_time
                 exit_reason = "SL"
-
                 break
-
             else:
-
                 exit_price = target_price
                 exit_time = candle_time
                 exit_reason = "TARGET"
-
                 break
 
         if hit_sl:
-
             exit_price = stop_price
             exit_time = candle_time
             exit_reason = "SL"
-
             break
 
         if hit_target:
-
             exit_price = target_price
             exit_time = candle_time
             exit_reason = "TARGET"
-
             break
 
         if candle_minutes >= FORCE_EXIT_MINUTES:
-
             exit_price = candle["close"]
             exit_time = candle_time
             exit_reason = "EOD"
-
             break
 
     if exit_price is None:
-
         last_candle = session[-1]
-
         exit_price = last_candle["close"]
         exit_time = last_candle["datetime"]
         exit_reason = "EOD"
 
-    points = (
-        exit_price
-        - entry_price
-    )
-
-    pnl = (
-        points
-        * QUANTITY
-    )
+    points = exit_price - entry_price
+    pnl = points * QUANTITY
 
     if pnl > 0:
         outcome = "WIN"
-
     elif pnl < 0:
         outcome = "LOSS"
-
     else:
         outcome = "BREAKEVEN"
+
+    pnl_r = (
+        points / risk_points
+        if risk_points > 0
+        else None
+    )
 
     return {
         "Date": trading_date,
@@ -1014,7 +1053,28 @@ def simulate_trade(
         "Outcome": outcome,
         "Points": points,
         "Quantity": QUANTITY,
-        "P&L": pnl
+        "P&L": pnl,
+
+        # Diagnostic fields.
+        "Entry Time Bucket": get_entry_time_bucket(entry_time),
+        "Risk Points": risk_points,
+        "P&L (R)": pnl_r,
+        "MFE Points": mfe_points,
+        "MFE %": mfe_pct,
+        "MFE (R)": mfe_r,
+        "MAE Points": mae_points,
+        "MAE %": mae_pct,
+        "MAE (R)": mae_r,
+        "MFE Time": max_high_candle["datetime"],
+        "MAE Time": min_low_candle["datetime"],
+        "Time to MFE (min)": time_to_mfe_minutes,
+        "Time to MAE (min)": time_to_mae_minutes,
+        "Reached +25%": reached_25pct,
+        "Reached +50%": reached_50pct,
+        "Reached +75%": reached_75pct,
+        "Reached +100%": reached_100pct,
+        "Reached Target": reached_target,
+        "Reached Stop": reached_stop,
     }
 
 
@@ -1108,7 +1168,6 @@ def build_trade_for_day(
 # ============================================================
 
 def build_trades_dataframe(trades):
-
     columns = [
         "Date",
         "Expiry",
@@ -1127,28 +1186,43 @@ def build_trades_dataframe(trades):
         "Outcome",
         "Points",
         "Quantity",
-        "P&L"
+        "P&L",
+        "Entry Time Bucket",
+        "Risk Points",
+        "P&L (R)",
+        "MFE Points",
+        "MFE %",
+        "MFE (R)",
+        "MAE Points",
+        "MAE %",
+        "MAE (R)",
+        "MFE Time",
+        "MAE Time",
+        "Time to MFE (min)",
+        "Time to MAE (min)",
+        "Reached +25%",
+        "Reached +50%",
+        "Reached +75%",
+        "Reached +100%",
+        "Reached Target",
+        "Reached Stop",
     ]
 
     if not trades:
-        return pd.DataFrame(
-            columns=columns
-        )
+        return pd.DataFrame(columns=columns)
 
-    df = pd.DataFrame(
-        trades
-    )
+    df = pd.DataFrame(trades)
 
     for column in [
         "Date",
         "Expiry",
         "Entry Time",
-        "Exit Time"
+        "Exit Time",
+        "MFE Time",
+        "MAE Time",
     ]:
         if column in df.columns:
-            df[column] = pd.to_datetime(
-                df[column]
-            )
+            df[column] = pd.to_datetime(df[column])
 
     return df[columns]
 
@@ -1379,6 +1453,298 @@ def build_statistics(trades_df):
     })
 
 
+
+def build_entry_time_analysis(trades_df):
+    columns = [
+        "Entry Time Bucket",
+        "Trades",
+        "Wins",
+        "Losses",
+        "Win Rate %",
+        "Net P&L",
+        "Avg P&L",
+        "Median P&L",
+        "Profit Factor",
+        "Avg MFE %",
+        "Avg MAE %",
+        "Avg MFE (R)",
+        "Avg MAE (R)",
+        "Target Reached %",
+        "Stop Reached %",
+    ]
+
+    if trades_df.empty:
+        return pd.DataFrame(columns=columns)
+
+    rows = []
+
+    for label, _, _ in ENTRY_TIME_BUCKETS:
+        group = trades_df[trades_df["Entry Time Bucket"] == label]
+
+        if group.empty:
+            continue
+
+        wins = int((group["Outcome"] == "WIN").sum())
+        losses = int((group["Outcome"] == "LOSS").sum())
+
+        gross_profit = group.loc[group["P&L"] > 0, "P&L"].sum()
+        gross_loss = group.loc[group["P&L"] < 0, "P&L"].sum()
+
+        profit_factor = (
+            gross_profit / abs(gross_loss)
+            if gross_loss < 0
+            else None
+        )
+
+        rows.append({
+            "Entry Time Bucket": label,
+            "Trades": len(group),
+            "Wins": wins,
+            "Losses": losses,
+            "Win Rate %": wins / len(group) * 100,
+            "Net P&L": group["P&L"].sum(),
+            "Avg P&L": group["P&L"].mean(),
+            "Median P&L": group["P&L"].median(),
+            "Profit Factor": profit_factor,
+            "Avg MFE %": group["MFE %"].mean(),
+            "Avg MAE %": group["MAE %"].mean(),
+            "Avg MFE (R)": group["MFE (R)"].mean(),
+            "Avg MAE (R)": group["MAE (R)"].mean(),
+            "Target Reached %": group["Reached Target"].mean() * 100,
+            "Stop Reached %": group["Reached Stop"].mean() * 100,
+        })
+
+    return pd.DataFrame(rows, columns=columns)
+
+
+def build_option_type_analysis(trades_df):
+    columns = [
+        "Option Type",
+        "Trades",
+        "Wins",
+        "Losses",
+        "Win Rate %",
+        "Net P&L",
+        "Avg P&L",
+        "Median P&L",
+        "Profit Factor",
+        "Avg MFE %",
+        "Avg MAE %",
+        "Avg MFE (R)",
+        "Avg MAE (R)",
+        "Target Reached %",
+        "Stop Reached %",
+    ]
+
+    if trades_df.empty:
+        return pd.DataFrame(columns=columns)
+
+    rows = []
+
+    for option_type in ["CE", "PE"]:
+        group = trades_df[trades_df["Option Type"] == option_type]
+
+        if group.empty:
+            continue
+
+        wins = int((group["Outcome"] == "WIN").sum())
+        losses = int((group["Outcome"] == "LOSS").sum())
+
+        gross_profit = group.loc[group["P&L"] > 0, "P&L"].sum()
+        gross_loss = group.loc[group["P&L"] < 0, "P&L"].sum()
+
+        profit_factor = (
+            gross_profit / abs(gross_loss)
+            if gross_loss < 0
+            else None
+        )
+
+        rows.append({
+            "Option Type": option_type,
+            "Trades": len(group),
+            "Wins": wins,
+            "Losses": losses,
+            "Win Rate %": wins / len(group) * 100,
+            "Net P&L": group["P&L"].sum(),
+            "Avg P&L": group["P&L"].mean(),
+            "Median P&L": group["P&L"].median(),
+            "Profit Factor": profit_factor,
+            "Avg MFE %": group["MFE %"].mean(),
+            "Avg MAE %": group["MAE %"].mean(),
+            "Avg MFE (R)": group["MFE (R)"].mean(),
+            "Avg MAE (R)": group["MAE (R)"].mean(),
+            "Target Reached %": group["Reached Target"].mean() * 100,
+            "Stop Reached %": group["Reached Stop"].mean() * 100,
+        })
+
+    return pd.DataFrame(rows, columns=columns)
+
+
+def build_mfe_analysis(trades_df):
+    columns = [
+        "MFE Bucket",
+        "Trades",
+        "Wins",
+        "Losses",
+        "Win Rate %",
+        "Net P&L",
+        "Avg Final P&L",
+        "Avg MFE %",
+        "Avg MAE %",
+    ]
+
+    if trades_df.empty:
+        return pd.DataFrame(columns=columns)
+
+    def bucket(value):
+        if value < 10:
+            return "<10%"
+        if value < 25:
+            return "10-25%"
+        if value < 50:
+            return "25-50%"
+        if value < 75:
+            return "50-75%"
+        if value < 100:
+            return "75-100%"
+        return ">=100%"
+
+    temp = trades_df.copy()
+    temp["MFE Bucket"] = temp["MFE %"].apply(bucket)
+
+    bucket_order = [
+        "<10%",
+        "10-25%",
+        "25-50%",
+        "50-75%",
+        "75-100%",
+        ">=100%",
+    ]
+
+    rows = []
+
+    for label in bucket_order:
+        group = temp[temp["MFE Bucket"] == label]
+
+        if group.empty:
+            continue
+
+        wins = int((group["Outcome"] == "WIN").sum())
+        losses = int((group["Outcome"] == "LOSS").sum())
+
+        rows.append({
+            "MFE Bucket": label,
+            "Trades": len(group),
+            "Wins": wins,
+            "Losses": losses,
+            "Win Rate %": wins / len(group) * 100,
+            "Net P&L": group["P&L"].sum(),
+            "Avg Final P&L": group["P&L"].mean(),
+            "Avg MFE %": group["MFE %"].mean(),
+            "Avg MAE %": group["MAE %"].mean(),
+        })
+
+    return pd.DataFrame(rows, columns=columns)
+
+
+def build_exit_diagnostics(trades_df):
+    columns = [
+        "Exit Reason",
+        "Trades",
+        "Wins",
+        "Losses",
+        "Win Rate %",
+        "Net P&L",
+        "Avg P&L",
+        "Avg MFE %",
+        "Avg MAE %",
+        "Avg MFE (R)",
+        "Avg MAE (R)",
+        "Target Reached %",
+        "Stop Reached %",
+    ]
+
+    if trades_df.empty:
+        return pd.DataFrame(columns=columns)
+
+    rows = []
+
+    for reason in ["TARGET", "SL", "EOD"]:
+        group = trades_df[trades_df["Exit Reason"] == reason]
+
+        if group.empty:
+            continue
+
+        wins = int((group["Outcome"] == "WIN").sum())
+        losses = int((group["Outcome"] == "LOSS").sum())
+
+        rows.append({
+            "Exit Reason": reason,
+            "Trades": len(group),
+            "Wins": wins,
+            "Losses": losses,
+            "Win Rate %": wins / len(group) * 100,
+            "Net P&L": group["P&L"].sum(),
+            "Avg P&L": group["P&L"].mean(),
+            "Avg MFE %": group["MFE %"].mean(),
+            "Avg MAE %": group["MAE %"].mean(),
+            "Avg MFE (R)": group["MFE (R)"].mean(),
+            "Avg MAE (R)": group["MAE (R)"].mean(),
+            "Target Reached %": group["Reached Target"].mean() * 100,
+            "Stop Reached %": group["Reached Stop"].mean() * 100,
+        })
+
+    return pd.DataFrame(rows, columns=columns)
+
+
+def build_diagnostic_statistics(trades_df):
+    columns = ["Metric", "Value"]
+
+    if trades_df.empty:
+        return pd.DataFrame(columns=columns)
+
+    total = len(trades_df)
+
+    gross_profit = trades_df.loc[trades_df["P&L"] > 0, "P&L"].sum()
+    gross_loss = trades_df.loc[trades_df["P&L"] < 0, "P&L"].sum()
+
+    profit_factor = (
+        gross_profit / abs(gross_loss)
+        if gross_loss < 0
+        else None
+    )
+
+    rows = [
+        ("Total Trades", total),
+        ("Net P&L", trades_df["P&L"].sum()),
+        ("Average P&L", trades_df["P&L"].mean()),
+        ("Median P&L", trades_df["P&L"].median()),
+        ("Average P&L (R)", trades_df["P&L (R)"].mean()),
+        ("Median P&L (R)", trades_df["P&L (R)"].median()),
+        ("Profit Factor", profit_factor),
+        ("Average MFE %", trades_df["MFE %"].mean()),
+        ("Median MFE %", trades_df["MFE %"].median()),
+        ("Average MFE (R)", trades_df["MFE (R)"].mean()),
+        ("Median MFE (R)", trades_df["MFE (R)"].median()),
+        ("Average MAE %", trades_df["MAE %"].mean()),
+        ("Median MAE %", trades_df["MAE %"].median()),
+        ("Average MAE (R)", trades_df["MAE (R)"].mean()),
+        ("Median MAE (R)", trades_df["MAE (R)"].median()),
+        ("Reached +25% %", trades_df["Reached +25%"].mean() * 100),
+        ("Reached +50% %", trades_df["Reached +50%"].mean() * 100),
+        ("Reached +75% %", trades_df["Reached +75%"].mean() * 100),
+        ("Reached +100% %", trades_df["Reached +100%"].mean() * 100),
+        ("Reached Target %", trades_df["Reached Target"].mean() * 100),
+        ("Reached Stop %", trades_df["Reached Stop"].mean() * 100),
+        ("Average Time to MFE (min)", trades_df["Time to MFE (min)"].mean()),
+        ("Median Time to MFE (min)", trades_df["Time to MFE (min)"].median()),
+        ("Average Time to MAE (min)", trades_df["Time to MAE (min)"].mean()),
+        ("Median Time to MAE (min)", trades_df["Time to MAE (min)"].median()),
+    ]
+
+    return pd.DataFrame(rows, columns=columns)
+
+
 def build_parameters():
 
     return pd.DataFrame({
@@ -1470,6 +1836,11 @@ def write_excel(
     daily_summary_df,
     monthly_summary_df,
     exit_summary_df,
+    entry_time_analysis_df,
+    option_type_analysis_df,
+    mfe_analysis_df,
+    exit_diagnostics_df,
+    diagnostic_statistics_df,
     daily_metadata_df,
     errors_df
 ):
@@ -1508,6 +1879,26 @@ def write_excel(
         (
             "Exit Summary",
             exit_summary_df
+        ),
+        (
+            "Entry Time Analysis",
+            entry_time_analysis_df
+        ),
+        (
+            "CE PE Analysis",
+            option_type_analysis_df
+        ),
+        (
+            "MFE Analysis",
+            mfe_analysis_df
+        ),
+        (
+            "Exit Diagnostics",
+            exit_diagnostics_df
+        ),
+        (
+            "Diagnostic Stats",
+            diagnostic_statistics_df
         ),
         (
             "Daily Metadata",
@@ -1695,6 +2086,12 @@ def main():
                 days=1
             )
 
+            continue
+
+        # No expiry on/after the trading date is a normal
+        # end-of-range condition, not an error.
+        if expiry is None:
+            current += timedelta(days=1)
             continue
 
         # ----------------------------------------------------
@@ -1905,6 +2302,26 @@ def main():
         trades_df
     )
 
+    entry_time_analysis_df = build_entry_time_analysis(
+        trades_df
+    )
+
+    option_type_analysis_df = build_option_type_analysis(
+        trades_df
+    )
+
+    mfe_analysis_df = build_mfe_analysis(
+        trades_df
+    )
+
+    exit_diagnostics_df = build_exit_diagnostics(
+        trades_df
+    )
+
+    diagnostic_statistics_df = build_diagnostic_statistics(
+        trades_df
+    )
+
     daily_metadata_df = build_daily_metadata()
 
     errors_df = build_error_dataframe()
@@ -2033,6 +2450,18 @@ def main():
             f"Net P&L      : {net_pnl:.2f}"
         )
 
+        if not diagnostic_statistics_df.empty:
+            print_progress("")
+            print_progress("DIAGNOSTICS")
+            print_progress("----------------")
+            for _, row in diagnostic_statistics_df.iterrows():
+                metric = row["Metric"]
+                value = row["Value"]
+                if isinstance(value, float):
+                    print_progress(f"{metric:<28}: {value:.2f}")
+                else:
+                    print_progress(f"{metric:<28}: {value}")
+
     # ========================================================
     # WRITE EXCEL
     # ========================================================
@@ -2043,6 +2472,11 @@ def main():
         daily_summary_df=daily_summary_df,
         monthly_summary_df=monthly_summary_df,
         exit_summary_df=exit_summary_df,
+        entry_time_analysis_df=entry_time_analysis_df,
+        option_type_analysis_df=option_type_analysis_df,
+        mfe_analysis_df=mfe_analysis_df,
+        exit_diagnostics_df=exit_diagnostics_df,
+        diagnostic_statistics_df=diagnostic_statistics_df,
         daily_metadata_df=daily_metadata_df,
         errors_df=errors_df
     )
