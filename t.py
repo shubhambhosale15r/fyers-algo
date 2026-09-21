@@ -92,7 +92,7 @@ except ImportError:
 # ------------------------------------------------------------
 
 APP_ID = "J0ENYFX9ME-200"
-ACCESS_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOlsiZDoxIiwiZDoyIiwieDowIiwieDoxIiwieDoyIl0sImF0X2hhc2giOiJnQUFBQUFCcXNMSXVpSHpzdjRwTU1ZdGZjbXFYcm12NXphbmhCYklob3JoR2NIc1dnRllzV1FDbEgyaTdMZS13VDBqOUNuX25PcXhZWFdHY2hOd2ZWdW9vbUZOcTQxQ2QwZXhYeTNxVjJVYWR2N0ZvLTk3aWJEYz0iLCJkaXNwbGF5X25hbWUiOiIiLCJvbXMiOiJLMSIsImhzbV9rZXkiOiI0NDIxYTAyNDU1ZWQyOTg3NzZhYzdiMzRmYzAzODJmYjk2MTE4Y2M1NzE3Y2NlMWE0ZWJkYmU0YyIsImlzRGRwaUVuYWJsZWQiOiJOIiwiaXNNdGZFbmFibGVkIjoiTiIsImZ5X2lkIjoiRkFBMzE0OTUiLCJhcHBUeXBlIjoyMDAsImV4cCI6MTc5MDAzNzAwMCwiaWF0IjoxNzg5OTY0ODQ2LCJpc3MiOiJhcGkuZnllcnMuaW4iLCJuYmYiOjE3ODk5NjQ4NDYsInN1YiI6ImFjY2Vzc190b2tlbiJ9.HwMYuscLcXY-KfN2nnf6s16AxAggloUAs21KWeWpDxw"
+ACCESS_TOKEN = ""
 
 
 # ------------------------------------------------------------
