@@ -74,7 +74,7 @@ ORDER_QTY = LOT_SIZE * LOTS
 
 DROP_PCT = float(os.getenv("DROP_PCT", "0.50"))
 HEDGE_RATIO = float(os.getenv("HEDGE_RATIO", "0.25"))
-TARGET_RS = float(os.getenv("TARGET_RS", "1.0"))
+TARGET_PROFIT_PCT = float(os.getenv("TARGET_PROFIT_PCT", "0.99"))
 TICK_SIZE = float(os.getenv("OPTION_TICK_SIZE", "0.05"))
 
 # LIVE_TRADING = os.getenv("LIVE_TRADING", "false").lower() in {"1", "true", "yes", "y"}
@@ -829,9 +829,17 @@ def submit_gtt_oco(trade: Dict[str, Any], qty: int, current_ltp: float) -> None:
     qty = require_lot_quantity(qty, "GTT OCO quantity", allow_zero=False)
     signal_ltp = safe_float(trade["signal_ltp"])
     open_px = safe_float(trade["option_open"])
-    distance = open_px * DROP_PCT
+
+    # SL: half the distance between the option open and trigger LTP.
+    distance = open_px - signal_ltp
     sl_trigger = round_to_tick(signal_ltp + distance / 2.0, "up")
-    target_trigger = round_to_tick(signal_ltp - TARGET_RS, "down")
+
+    # Target: 99% premium decay, leaving 1% of entry premium.
+    if not 0.0 < TARGET_PROFIT_PCT < 1.0:
+        raise ValueError("TARGET_PROFIT_PCT must be between 0 and 1")
+
+    target_raw = signal_ltp * (1.0 - TARGET_PROFIT_PCT)
+    target_trigger = round_to_tick(target_raw, "down")
 
     if target_trigger <= 0:
         raise RuntimeError(f"Calculated target is non-positive: {target_trigger}")
