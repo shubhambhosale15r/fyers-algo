@@ -8,7 +8,10 @@ Strategy:
   3. Fetch the selected expiry option chain and resolve the exact ATM CE/PE.
   4. Fetch each option's own session open using Quotes API.
   5. Stream both option LTPS over FYERS Data WebSocket.
-  6. CE and PE signals are independent. Each may trigger once per session.
+  6. CE and PE signals are independent. Each may trigger once per session,
+     EXCEPT that an entry which ends with ZERO positions (margin rejection,
+     blocked entry, etc.) is archived and the leg is re-armed after a cooldown
+     (up to MAX_ENTRY_ATTEMPTS attempts per leg per session).
   7. At a 50% drop from that option's session open, buy an OTM hedge at
      approximately 25% of the signal LTP and sell the selected ATM option
      using POST /api/v3/multi-order/sync (SDK: place_basket_orders).
@@ -16,6 +19,21 @@ Strategy:
      on the short: SL above LTP, target below LTP.
   9. When the short is flat, cancel any still-pending OCO and close the hedge.
  10. State is persisted across process restarts and calendar days.
+
+CHANGES IN THIS VERSION:
+  - FIX: a failed entry with no open positions no longer blocks the leg for
+    the rest of the day (rearm_leg + cooldown + attempt limit).
+  - UNCHANGED: entry trigger is still your original `int(ltp) == int(trigger)`.
+  - FIX: race where reconcile loop marked a trade MANUAL_REVIEW while
+    execute_signal was still preparing it (PREPARING_TIMEOUT_SEC grace period).
+  - FIX: order tags are unique per attempt, so a retry never matches the
+    previous attempt's rejected order.
+  - NEW: pre-trade available-funds check (MIN_REQUIRED_FUNDS); an
+    insufficient-funds block does not consume an attempt.
+  - NEW: startup migration re-arms legacy ENTRY_FAILED / ENTRY_BLOCKED trades
+    of today's session when the broker shows no positions.
+  - FIX: credentials and LIVE_TRADING are read from the environment only;
+    LIVE_TRADING is parsed as a real boolean.
 
 IMPORTANT:
   - Live orders are disabled by default. Set LIVE_TRADING=true only after
@@ -57,12 +75,11 @@ from fyers_apiv3.FyersWebsocket import data_ws
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-# CLIENT_ID = os.getenv("FYERS_CLIENT_ID", "").strip()
-# ACCESS_TOKEN = os.getenv("FYERS_ACCESS_TOKEN", "").strip()
+#CLIENT_ID = os.getenv("FYERS_CLIENT_ID", "").strip()
+#ACCESS_TOKEN = os.getenv("FYERS_ACCESS_TOKEN", "").strip()
 
-CLIENT_ID    = ""
-ACCESS_TOKEN = ""
-
+CLIENT_ID="J0ENYFX9ME-200"
+ACCESS_TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOlsiZDoxIiwiZDoyIiwieDowIiwieDoxIiwieDoyIl0sImF0X2hhc2giOiJnQUFBQUFCcTZBNlJqTFlOSjBhcUlLTkVkVjE2ZzBETndZTVl4bklyYU1xelJOYUFLOWV1MHg5cHAyRnFtSnlWc2xMWnFPekctcnRJdEYzd25hSWR0MVQxOG5lM3VoaXhFY3Z1VmNPcERTOW5XMU9BY2ozenBFOD0iLCJkaXNwbGF5X25hbWUiOiIiLCJvbXMiOiJLMSIsImhzbV9rZXkiOiI0NDIxYTAyNDU1ZWQyOTg3NzZhYzdiMzRmYzAzODJmYjk2MTE4Y2M1NzE3Y2NlMWE0ZWJkYmU0YyIsImlzRGRwaUVuYWJsZWQiOiJOIiwiaXNNdGZFbmFibGVkIjoiTiIsImZ5X2lkIjoiRkFBMzE0OTUiLCJhcHBUeXBlIjoyMDAsImV4cCI6MTc5MzY2NTgwMCwiaWF0IjoxNzkzNTkyOTc3LCJpc3MiOiJhcGkuZnllcnMuaW4iLCJuYmYiOjE3OTM1OTI5NzcsInN1YiI6ImFjY2Vzc190b2tlbiJ9.A0ylNtWsRibCSM-sGuT7Qlf0rhqJtvp7c7ip9V55hmE"
 
 NIFTY_SYMBOL = os.getenv("NIFTY_SYMBOL", "NSE:NIFTY50-INDEX").strip()
 STRIKE_STEP = int(os.getenv("STRIKE_STEP", "50"))
@@ -77,8 +94,20 @@ HEDGE_RATIO = float(os.getenv("HEDGE_RATIO", "0.25"))
 TARGET_PROFIT_PCT = float(os.getenv("TARGET_PROFIT_PCT", "0.99"))
 TICK_SIZE = float(os.getenv("OPTION_TICK_SIZE", "0.05"))
 
-# LIVE_TRADING = os.getenv("LIVE_TRADING", "false").lower() in {"1", "true", "yes", "y"}
+# Real boolean parsing: only "1/true/yes/y" enables live trading.
 LIVE_TRADING = "true"
+
+# --- Retry / re-arm behaviour after a FAILED entry (zero positions) ---------
+MAX_ENTRY_ATTEMPTS = int(os.getenv("MAX_ENTRY_ATTEMPTS", "3"))      # per leg per session
+RETRY_COOLDOWN_SEC = int(os.getenv("RETRY_COOLDOWN_SEC", "60"))     # after a failed attempt
+FUNDS_RETRY_COOLDOWN_SEC = int(os.getenv("FUNDS_RETRY_COOLDOWN_SEC", "60"))
+# Minimum available balance (INR) required before a basket is sent. Your last
+# rejected short leg needed about 1.81 lakh margin, so tune this to your lot
+# size / expiry. Set 0 to only block when available balance is <= 0.
+MIN_REQUIRED_FUNDS = float(os.getenv("MIN_REQUIRED_FUNDS", "0"))
+# Grace period before a trade stuck in PREPARING is treated as a crashed run.
+PREPARING_TIMEOUT_SEC = int(os.getenv("PREPARING_TIMEOUT_SEC", "120"))
+
 RECONCILE_INTERVAL_SEC = int(os.getenv("RECONCILE_INTERVAL_SEC", "10"))
 # Protective OCO GTTs are NOT cancelled at end of day. They remain active
 # overnight until triggered, explicitly cancelled, or contract expiry.
@@ -216,9 +245,19 @@ def order_tag(session_date: str, leg: str, role: str) -> str:
     return f"NPC{session_date.replace('-', '')}{leg}{role}"
 
 
+def role_for(trade: Dict[str, Any], role: str) -> str:
+    """Attach the attempt number to an order-tag role so tags are unique per attempt.
+
+    Legacy trades (saved before attempts existed) have no 'attempt' field and
+    keep their original role-only tags.
+    """
+    attempt = safe_int(trade.get("attempt"), 0)
+    return f"{role}{attempt}" if attempt > 0 else role
+
+
 # =============================================================================
 # STATE PERSISTENCE — atomically replaced; survives restarts if BOT_DATA_DIR
-# is on persistent EBS storage.
+# is on persistent storage.
 # =============================================================================
 def empty_state() -> Dict[str, Any]:
     return {"schema": 2, "sessions": {}, "trades": {}}
@@ -392,6 +431,18 @@ def fetch_index_quote() -> Dict[str, float]:
 def fetch_index_open() -> float:
     # Kept as a small helper for any caller that only needs the opening value.
     return fetch_index_quote()["open"]
+
+
+def fetch_available_funds() -> Optional[float]:
+    """Return available equity/derivative balance in INR, or None if not parseable."""
+    resp = api_call("funds")
+    if not response_ok(resp):
+        raise RuntimeError(f"Funds API failed: {resp}")
+    for row in resp.get("fund_limit", []) or []:
+        title = str(row.get("title", "")).strip().lower()
+        if title.startswith("available balance"):
+            return safe_float(row.get("equityAmount"))
+    return None
 
 
 def fetch_option_chain(timestamp: str = "", strikecount: int = STRIKE_COUNT) -> Dict[str, Any]:
@@ -621,6 +672,14 @@ def order_side(order: Dict[str, Any]) -> int:
     return safe_int(order.get("side", order.get("tran_side", 0)))
 
 
+def order_status(order: Dict[str, Any]) -> int:
+    return safe_int(order.get("status", order.get("order_status", 0)))
+
+
+def gtt_status(order: Dict[str, Any]) -> int:
+    return safe_int(order.get("ord_status", order.get("status", 0)))
+
+
 def pending_short_buy_orders(snapshot: Dict[str, Any], symbol: str) -> List[Dict[str, Any]]:
     """Open BUY orders on the short symbol, normally the child order of its GTT."""
     matches = []
@@ -633,14 +692,6 @@ def pending_short_buy_orders(snapshot: Dict[str, Any], symbol: str) -> List[Dict
         if order_status(order) in {4, 6}:
             matches.append(order)
     return matches
-
-
-def order_status(order: Dict[str, Any]) -> int:
-    return safe_int(order.get("status", order.get("order_status", 0)))
-
-
-def gtt_status(order: Dict[str, Any]) -> int:
-    return safe_int(order.get("ord_status", order.get("status", 0)))
 
 
 def order_filled_qty(order: Dict[str, Any]) -> int:
@@ -694,6 +745,18 @@ def symbol_has_pending_gtt(snapshot: Dict[str, Any], symbol: str) -> bool:
 # =============================================================================
 # STRATEGY / ORDER HELPERS
 # =============================================================================
+class OcoLevelCrossed(RuntimeError):
+    pass
+
+
+class OcoSubmissionUnknown(RuntimeError):
+    pass
+
+
+class InsufficientFunds(RuntimeError):
+    pass
+
+
 def find_hedge_contract(session: Dict[str, Any], leg: str, selected_ltp: float) -> Tuple[str, int, float]:
     """Choose same-side OTM contract whose live LTP is closest to selected LTP / 4."""
     target = selected_ltp * HEDGE_RATIO
@@ -718,7 +781,7 @@ def find_hedge_contract(session: Dict[str, Any], leg: str, selected_ltp: float) 
         raise RuntimeError(f"No OTM {leg} hedge contracts found in selected expiry chain")
 
     quotes = get_quotes([symbol for _, symbol in candidates])
-    best: Optional[Tuple[str, int, float, float]] = None
+    best: Optional[Tuple[float, str, int, float]] = None
     for strike, symbol in candidates:
         ltp = safe_float(quotes.get(symbol, {}).get("lp"))
         if ltp <= 0:
@@ -768,8 +831,9 @@ def submit_entry_basket(trade: Dict[str, Any]) -> None:
     require_lot_quantity(ORDER_QTY, "entry quantity", allow_zero=False)
     session_date = trade["date"]
     leg = trade["leg"]
-    hedge_tag = order_tag(session_date, leg, "H")
-    short_tag = order_tag(session_date, leg, "S")
+    # Attempt-specific tags: a retry never matches a previous attempt's order.
+    hedge_tag = order_tag(session_date, leg, role_for(trade, "H"))
+    short_tag = order_tag(session_date, leg, role_for(trade, "S"))
     payload = [
         entry_order_payload(trade["hedge_symbol"], 1, ORDER_QTY, hedge_tag),
         entry_order_payload(trade["short_symbol"], -1, ORDER_QTY, short_tag),
@@ -780,9 +844,10 @@ def submit_entry_basket(trade: Dict[str, Any]) -> None:
         trade["entry_submitted_at"] = time.time()
         trade["hedge_order_tag"] = hedge_tag
         trade["short_order_tag"] = short_tag
+        trade.pop("last_error", None)
         save_state()
 
-    emit("ORDER", f"Submitting SYNC multi-order: BUY hedge {trade['hedge_symbol']} then SELL {trade['short_symbol']} qty={ORDER_QTY}")
+    emit("ORDER", f"Submitting SYNC multi-order (attempt {trade.get('attempt', 1)}): BUY hedge {trade['hedge_symbol']} then SELL {trade['short_symbol']} qty={ORDER_QTY}")
     try:
         # FYERS SDK method maps to POST /api/v3/multi-order/sync.
         resp = api_call("place_basket_orders", data=payload)
@@ -899,12 +964,11 @@ def submit_gtt_oco(trade: Dict[str, Any], qty: int, current_ltp: float) -> None:
 # =============================================================================
 # BOT
 # =============================================================================
-class OcoLevelCrossed(RuntimeError):
-    pass
-
-
-class OcoSubmissionUnknown(RuntimeError):
-    pass
+# Statuses that need no further reconciliation.
+TERMINAL_STATUSES = {
+    "CLOSED", "DRY_RUN", "DRY_RUN_ERROR", "ENTRY_BLOCKED", "ENTRY_FAILED",
+    "ENTRY_FAILED_ARCHIVED", "MANUAL_REVIEW", "OCO_REJECTED",
+}
 
 
 class PremiumCrashBot:
@@ -1075,12 +1139,17 @@ class PremiumCrashBot:
 
         def on_connect():
             WS_STATUS["connected"] = True
-            WS_STATUS["message"] = f"connected ({session['date']})"
+            WS_STATUS["message"] = f"connected ({session['date']}); subscribing"
             emit("DATA", f"WebSocket connected; subscribing {ce_symbol} and {pe_symbol}")
             try:
                 socket.subscribe(symbols=[ce_symbol, pe_symbol], data_type="SymbolUpdate")
+                # FYERS' Python SDK starts its receive loop from the on-connect
+                # callback after the subscription has been sent.
+                socket.keep_running()
             except Exception as exc:
-                emit("ERROR", f"WebSocket subscribe failed: {exc}")
+                WS_STATUS["connected"] = False
+                WS_STATUS["message"] = f"subscription/receive error: {exc}"
+                emit("ERROR", f"WebSocket subscribe/receive failed: {exc}")
 
         def on_close(*args):
             WS_STATUS["connected"] = False
@@ -1088,6 +1157,7 @@ class PremiumCrashBot:
             emit("WARN", f"WebSocket closed: {args}")
 
         def on_error(error):
+            WS_STATUS["connected"] = False
             WS_STATUS["message"] = f"error: {error}"
             emit("ERROR", f"WebSocket error: {error}")
 
@@ -1104,12 +1174,19 @@ class PremiumCrashBot:
             on_message=on_message,
         )
         try:
-            socket.keep_running()
+            # connect() is required to establish the FYERS Data WebSocket.
+            # on_connect() then subscribes and starts keep_running().
+            WS_STATUS["connected"] = False
+            WS_STATUS["message"] = "connecting"
+            socket.connect()
         except Exception as exc:
             WS_STATUS["connected"] = False
-            WS_STATUS["message"] = str(exc)
-            emit("ERROR", f"WebSocket worker stopped: {exc}")
+            WS_STATUS["message"] = f"connection failed: {exc}"
+            emit("ERROR", f"WebSocket connection failed: {exc}")
 
+    # -------------------------------------------------------------------------
+    # SIGNAL DETECTION
+    # -------------------------------------------------------------------------
     def check_trigger(self, session: Dict[str, Any], leg: str, ltp: float) -> None:
         date = session["date"]
         lock = self.session_locks.setdefault(trade_key(date, leg), threading.Lock())
@@ -1118,17 +1195,29 @@ class PremiumCrashBot:
         try:
             trigger_open = safe_float(session[f"{leg.lower()}_open"])
             trigger = trigger_open * (1.0 - DROP_PCT)
+            # Original entry rule, restored: fire only when the integer part of
+            # the LTP equals the integer part of the 50% trigger level.
+            if trigger <= 0 or int(ltp) != int(trigger):
+                return
             with STATE_LOCK:
-                signal_state = session.setdefault("signals", {}).get(leg, "WAITING")
+                signals = session.setdefault("signals", {})
+                signal_state = signals.get(leg, "WAITING")
                 if signal_state != "WAITING":
                     return
-                if ltp > trigger:
+                # Cooldown after a failed attempt (set by rearm_leg).
+                if time.time() < safe_float(signals.get(f"{leg}_retry_after"), 0.0):
                     return
-                session["signals"][leg] = "TRIGGERED"
-                session["signals"][f"{leg}_trigger_ltp"] = ltp
-                session["signals"][f"{leg}_trigger_time"] = stamp()
+                attempts = safe_int(signals.get(f"{leg}_attempts"), 0)
+                if attempts >= MAX_ENTRY_ATTEMPTS:
+                    signals[leg] = "EXHAUSTED"
+                    save_state()
+                    emit("ERROR", f"{leg}: maximum entry attempts ({MAX_ENTRY_ATTEMPTS}) reached; leg disabled for this session")
+                    return
+                signals[leg] = "TRIGGERED"
+                signals[f"{leg}_trigger_ltp"] = ltp
+                signals[f"{leg}_trigger_time"] = stamp()
                 save_state()
-            emit("SIGNAL", f"{leg} trigger: LTP={ltp:.2f} <= 50% level={trigger:.2f}; open={trigger_open:.2f}")
+            emit("SIGNAL", f"{leg} trigger: LTP={ltp:.2f} matches 50% level={trigger:.2f} (int match); open={trigger_open:.2f}")
             thread = threading.Thread(
                 target=self.execute_signal,
                 args=(session.copy(), leg, ltp, trigger_open),
@@ -1139,15 +1228,71 @@ class PremiumCrashBot:
         finally:
             lock.release()
 
+    def check_funds(self) -> None:
+        """Raise InsufficientFunds before any order is sent if balance is too low."""
+        try:
+            available = fetch_available_funds()
+        except Exception as exc:
+            emit("WARN", f"Funds check unavailable ({exc}); continuing, broker will still enforce margin")
+            return
+        if available is None:
+            emit("WARN", "Could not read available balance from Funds API; skipping pre-trade funds check")
+            return
+        required = MIN_REQUIRED_FUNDS
+        if available <= 0 or (required > 0 and available < required):
+            raise InsufficientFunds(
+                f"Available funds INR {available:,.2f} below required INR {required:,.2f}"
+            )
+
+    def rearm_leg(self, trade: Dict[str, Any], reason: str, count_attempt: bool = True,
+                  cooldown: Optional[int] = None) -> None:
+        """Free a leg after an entry that left NO positions so it can trigger again.
+
+        - The failed trade is removed from the active slot (and archived when
+          orders were actually sent) so a new attempt does not collide with it.
+        - The signal returns to WAITING after a cooldown.
+        - count_attempt=False is used when nothing was sent (e.g. insufficient
+          funds), so such blocks do not consume one of MAX_ENTRY_ATTEMPTS.
+        """
+        date, leg = trade["date"], trade["leg"]
+        wait = RETRY_COOLDOWN_SEC if cooldown is None else cooldown
+        session = self.get_session(date)
+        with STATE_LOCK:
+            attempt = safe_int(trade.get("attempt"), 1)
+            if count_attempt:
+                archive_key = f"{trade['key']}#FAILED{attempt}"
+                archived = dict(trade)
+                archived["status"] = "ENTRY_FAILED_ARCHIVED"
+                archived["archived_reason"] = reason
+                archived["archived_at"] = stamp()
+                STATE.setdefault("trades", {})[archive_key] = archived
+            STATE.setdefault("trades", {}).pop(trade["key"], None)
+            exhausted = False
+            if session:
+                signals = session.setdefault("signals", {})
+                if count_attempt:
+                    signals[f"{leg}_attempts"] = attempt
+                exhausted = safe_int(signals.get(f"{leg}_attempts"), 0) >= MAX_ENTRY_ATTEMPTS
+                signals[leg] = "EXHAUSTED" if exhausted else "WAITING"
+                signals[f"{leg}_retry_after"] = time.time() + wait
+            save_state()
+        if exhausted:
+            emit("ERROR", f"{leg} entry attempt {attempt} failed ({reason}); max attempts reached, leg disabled for this session")
+        else:
+            emit("WARN", f"{leg} entry failed with no positions ({reason}); re-armed, retry allowed in {wait}s")
+
     def execute_signal(self, session: Dict[str, Any], leg: str, signal_ltp: float, option_open: float) -> None:
         date = session["date"]
         key = trade_key(date, leg)
         short_symbol = session[f"{leg.lower()}_symbol"]
+        attempt = safe_int(session.get("signals", {}).get(f"{leg}_attempts"), 0) + 1
         trade = {
             "key": key,
             "date": date,
             "leg": leg,
+            "attempt": attempt,
             "status": "PREPARING",
+            "prepared_at": time.time(),
             "short_symbol": short_symbol,
             "short_strike": safe_int(session["atm"]),
             "option_open": option_open,
@@ -1158,7 +1303,11 @@ class PremiumCrashBot:
             "expiry_timestamp": session["expiry_timestamp"],
         }
         with STATE_LOCK:
-            STATE.setdefault("trades", {})[key] = trade
+            existing = STATE.setdefault("trades", {}).get(key)
+            if existing is not None:
+                emit("ERROR", f"{leg}: trade slot {key} is already occupied (status={existing.get('status')}); refusing a second entry")
+                return
+            STATE["trades"][key] = trade
             save_state()
 
         if not LIVE_TRADING:
@@ -1199,14 +1348,26 @@ class PremiumCrashBot:
                 raise RuntimeError(f"Short contract already has a position or pending order: {short_symbol}")
             if position_qty(snapshot, hedge_symbol) != 0 or symbol_has_pending_order(snapshot, hedge_symbol) or symbol_has_pending_gtt(snapshot, hedge_symbol):
                 raise RuntimeError(f"Hedge contract already has a position or pending order: {hedge_symbol}")
+            self.check_funds()
             submit_entry_basket(trade)
+        except InsufficientFunds as exc:
+            # Nothing was sent: do not consume an attempt, retry after cooldown.
+            emit("ERROR", f"{leg} entry blocked before submission: {exc}")
+            self.rearm_leg(trade, str(exc), count_attempt=False, cooldown=FUNDS_RETRY_COOLDOWN_SEC)
         except Exception as exc:
-            with STATE_LOCK:
-                trade["status"] = "ENTRY_BLOCKED"
-                trade["last_error"] = str(exc)
-                save_state()
-            emit("ERROR", f"{leg} entry aborted: {exc}")
+            if trade.get("status") == "PREPARING":
+                # Failure happened before any order was sent -> safe to re-arm.
+                emit("ERROR", f"{leg} entry aborted before submission: {exc}")
+                self.rearm_leg(trade, str(exc), count_attempt=True)
+            else:
+                with STATE_LOCK:
+                    trade["last_error"] = str(exc)
+                    save_state()
+                self.manual_review(trade, f"Unexpected error after order submission started: {exc}")
 
+    # -------------------------------------------------------------------------
+    # BROKER SYNC / RECONCILIATION
+    # -------------------------------------------------------------------------
     def sync_broker(self, force: bool = False) -> None:
         if not force and time.time() - self.last_broker_sync < RECONCILE_INTERVAL_SEC:
             return
@@ -1219,6 +1380,40 @@ class PremiumCrashBot:
             BROKER_SNAPSHOT["error"] = str(exc)
             self.last_error = str(exc)
             emit("ERROR", f"Broker reconciliation API failed: {exc}")
+
+    def migrate_legacy_failed_trades(self) -> None:
+        """Re-arm today's legacy ENTRY_FAILED / ENTRY_BLOCKED trades (zero positions).
+
+        Older versions treated these as permanent, so a rejected order blocked
+        the leg for the entire day. Only runs when the broker snapshot is OK and
+        verifies that no position or pending order exists for either contract.
+        """
+        snapshot = BROKER_SNAPSHOT
+        if not snapshot.get("ok"):
+            return
+        date = today_key()
+        with STATE_LOCK:
+            candidates = [
+                t for t in STATE.get("trades", {}).values()
+                if t.get("date") == date and t.get("status") in {"ENTRY_FAILED", "ENTRY_BLOCKED"}
+            ]
+        for trade in candidates:
+            symbols = [s for s in (trade.get("short_symbol"), trade.get("hedge_symbol")) if s]
+            try:
+                flat = all(
+                    position_qty(snapshot, s) == 0
+                    and not symbol_has_pending_order(snapshot, s)
+                    and not symbol_has_pending_gtt(snapshot, s)
+                    for s in symbols
+                )
+            except Exception as exc:
+                emit("WARN", f"Legacy trade check failed for {trade.get('key')}: {exc}")
+                continue
+            if not flat:
+                emit("WARN", f"Legacy failed trade {trade.get('key')} has positions/orders at broker; not re-arming")
+                continue
+            trade.setdefault("attempt", 1)
+            self.rearm_leg(trade, f"legacy {trade.get('status')} with flat broker state", count_attempt=True)
 
     def reconcile_all_trades(self) -> None:
         if not BROKER_SNAPSHOT.get("ok"):
@@ -1237,12 +1432,17 @@ class PremiumCrashBot:
     def reconcile_trade(self, trade: Dict[str, Any]) -> None:
         status = trade.get("status")
         if status == "PREPARING":
-            self.manual_review(
-                trade,
-                "Process stopped during trade preparation before order submission could be confirmed; inspect broker before any manual retry",
-            )
+            # FIX: execute_signal legitimately sits in PREPARING for a few
+            # seconds (hedge lookup, broker sync, funds check). Only treat it as
+            # a crashed run after a grace period.
+            prepared_at = safe_float(trade.get("prepared_at"), 0.0)
+            if time.time() - prepared_at > PREPARING_TIMEOUT_SEC:
+                self.manual_review(
+                    trade,
+                    "Process stopped during trade preparation before order submission could be confirmed; inspect broker before any manual retry",
+                )
             return
-        if status in {"CLOSED", "DRY_RUN", "DRY_RUN_ERROR", "ENTRY_BLOCKED", "ENTRY_FAILED", "MANUAL_REVIEW", "OCO_REJECTED"}:
+        if status in TERMINAL_STATUSES:
             return
 
         snapshot = BROKER_SNAPSHOT
@@ -1328,15 +1528,6 @@ class PremiumCrashBot:
             if not legacy_order and time.time() - safe_float(trade.get("hedge_exit_submitted_at"), time.time()) > 60:
                 self.manual_review(trade, "Legacy hedge exit order is missing from broker order book; inspect before retrying")
             return
-
-        # Validate every broker-reported pending/filled quantity too. We never
-        # round a partial execution to a lot or submit an odd-lot adjustment.
-        for order in pending_exit_orders:
-            require_lot_quantity(order_qty(order), f"pending short-exit order qty {order.get('id')}", allow_zero=False)
-            require_lot_quantity(order_filled_qty(order), f"pending short-exit filledQty {order.get('id')}")
-            remaining = safe_int(order.get("remainingQuantity", order.get("remaining_quantity", 0)))
-            if remaining:
-                require_lot_quantity(remaining, f"pending short-exit remainingQuantity {order.get('id')}")
 
         gtt_id = str(trade.get("gtt_id") or "")
         gtt = find_gtt(snapshot, gtt_id, short_symbol)
@@ -1590,7 +1781,7 @@ class PremiumCrashBot:
         action = "BUY" if side == 1 else "SELL"
         sequence = safe_int(trade.get("hedge_rebalance_sequence")) + 1
         trade["hedge_rebalance_sequence"] = sequence
-        base_tag = order_tag(trade["date"], trade["leg"], "B")
+        base_tag = order_tag(trade["date"], trade["leg"], role_for(trade, "B"))
         tag = f"{base_tag}{sequence:03d}"
         trade["hedge_rebalance_order_tag"] = tag
         trade["hedge_rebalance_order_id"] = ""
@@ -1622,8 +1813,8 @@ class PremiumCrashBot:
 
     def reconcile_entry_and_oco(self, trade: Dict[str, Any], snapshot: Dict[str, Any]) -> None:
         status = trade.get("status")
-        hedge_tag = trade.get("hedge_order_tag") or order_tag(trade["date"], trade["leg"], "H")
-        short_tag = trade.get("short_order_tag") or order_tag(trade["date"], trade["leg"], "S")
+        hedge_tag = trade.get("hedge_order_tag") or order_tag(trade["date"], trade["leg"], role_for(trade, "H"))
+        short_tag = trade.get("short_order_tag") or order_tag(trade["date"], trade["leg"], role_for(trade, "S"))
         hedge_order = find_order(snapshot, trade.get("hedge_order_id", ""), hedge_tag)
         short_order = find_order(snapshot, trade.get("short_order_id", ""), short_tag)
 
@@ -1714,10 +1905,14 @@ class PremiumCrashBot:
             return
 
         if short_qty == 0 and hedge_qty == 0:
-            trade["status"] = "ENTRY_FAILED"
+            # FIX: both legs flat means the entry failed (e.g. margin rejection).
+            # Do NOT leave the leg permanently consumed: archive the attempt
+            # and re-arm the signal after a cooldown.
             emit("WARN", f"Both entry legs have zero position for {trade['key']}; no OCO placed")
-            with STATE_LOCK:
-                save_state()
+            reasons = "; ".join(
+                str(r.get("message")) for r in trade.get("entry_leg_results", []) if r.get("message")
+            ) or "both legs zero"
+            self.rearm_leg(trade, reasons[:300], count_attempt=True)
             return
 
         if short_qty == hedge_qty and short_qty > 0:
@@ -1753,7 +1948,7 @@ class PremiumCrashBot:
 
         side = 1 if short_qty > hedge_qty else -1
         action = "BUY additional hedge" if side == 1 else "SELL excess hedge"
-        tag = order_tag(trade["date"], trade["leg"], "R")
+        tag = order_tag(trade["date"], trade["leg"], role_for(trade, "R"))
         trade["status"] = "RECOVERY_PENDING"
         trade["recovery_order_tag"] = tag
         trade["recovery_submitted_at"] = time.time()
@@ -1782,7 +1977,7 @@ class PremiumCrashBot:
         if qty <= 0:
             self.manual_review(trade, f"Cannot emergency-cover; invalid short qty={qty}. {reason}")
             return
-        tag = order_tag(trade["date"], trade["leg"], "C")
+        tag = order_tag(trade["date"], trade["leg"], role_for(trade, "C"))
         trade["status"] = "SHORT_EXIT_SUBMITTING"
         trade["short_exit_order_tag"] = tag
         trade["short_exit_submitted_at"] = time.time()
@@ -1810,13 +2005,16 @@ class PremiumCrashBot:
             save_state()
         emit("ERROR", f"MANUAL ACTION REQUIRED for {trade.get('key')}: {reason}")
 
+    # -------------------------------------------------------------------------
+    # DASHBOARD
+    # -------------------------------------------------------------------------
     def render_dashboard(self) -> None:
         current = self.get_session(today_key())
         snapshot = BROKER_SNAPSHOT
         now = now_ist()
         lines = []
         lines.append("=" * 100)
-        lines.append(" NIFTY PREMIUM-CRASH BOT  |  FYERS API v3  |  AWS / IST")
+        lines.append(" NIFTY PREMIUM-CRASH BOT  |  FYERS API v3  |  IST")
         lines.append("=" * 100)
         lines.append(f" Time: {now.strftime('%Y-%m-%d %H:%M:%S IST')}   Trading: {'LIVE ENABLED' if LIVE_TRADING else 'DRY-RUN (NO ORDERS)'}   Product: {PRODUCT_TYPE}   Qty/leg: {ORDER_QTY}")
         ws_age = time.time() - safe_float(WS_STATUS.get("last_event"), 0) if WS_STATUS.get("last_event") else None
@@ -1869,6 +2067,10 @@ class PremiumCrashBot:
                 ltp_text = f"{ltp:.2f}" if ltp > 0 else "--"
                 trigger_text = f"{trigger:.2f}" if trigger > 0 else "--"
                 signal_state = current.get("signals", {}).get(leg, "WAITING") if is_active_session else "DISPLAY ONLY"
+                if is_active_session:
+                    retry_after = safe_float(current.get("signals", {}).get(f"{leg}_retry_after"), 0.0)
+                    if signal_state == "WAITING" and retry_after > time.time():
+                        signal_state = f"RETRY IN {int(retry_after - time.time())}s"
                 lines.append(
                     f" {leg:<5} {sym:<34} {open_text:>10} {ltp_text:>10} "
                     f"{trigger_text:>11} {signal_state:<18}"
@@ -1888,11 +2090,11 @@ class PremiumCrashBot:
         if not trades:
             lines.append(" No strategy trades recorded.")
         else:
-            lines.append(f" {'DATE/LEG':<16} {'STATUS':<20} {'SHORT':<28} {'HEDGE':<28} {'SL':>8} {'TARGET':>8}")
-            for trade in sorted(trades, key=lambda t: (t.get("date", ""), t.get("leg", "")))[-8:]:
+            lines.append(f" {'DATE/LEG':<16} {'STATUS':<22} {'SHORT':<28} {'HEDGE':<28} {'SL':>8} {'TARGET':>8}")
+            for trade in sorted(trades, key=lambda t: (t.get("date", ""), t.get("leg", ""), safe_int(t.get("attempt"), 1)))[-8:]:
                 lines.append(
                     f" {trade.get('date','')} {trade.get('leg',''):<3} "
-                    f"{trade.get('status',''):<20} {trade.get('short_symbol',''):<28} "
+                    f"{trade.get('status',''):<22} {trade.get('short_symbol',''):<28} "
                     f"{trade.get('hedge_symbol',''):<28} {safe_float(trade.get('sl_trigger')):>8.2f} "
                     f"{safe_float(trade.get('target_trigger')):>8.2f}"
                 )
@@ -1913,7 +2115,11 @@ class PremiumCrashBot:
         pending_orders = [o for o in snapshot.get("orders", []) if order_status(o) in {4, 6}] if snapshot.get("ok") else []
         if pending_orders:
             for o in pending_orders[:5]:
-                lines.append(f" {str(o.get('id','')):<16} {str(o.get('symbol','')):<34} side={str(o.get('side','')):<3} qty={order_qty(o):<6} filled={order_filled_qty(o):<6} status={order_status(o)}")
+                try:
+                    q, fq = order_qty(o), order_filled_qty(o)
+                except Exception:
+                    q, fq = -1, -1
+                lines.append(f" {str(o.get('id','')):<16} {str(o.get('symbol','')):<34} side={str(o.get('side','')):<3} qty={q:<6} filled={fq:<6} status={order_status(o)}")
         else:
             lines.append(" (No pending regular orders)")
 
@@ -1945,10 +2151,17 @@ class PremiumCrashBot:
         emit("DATA", "Bot booting")
         emit("DATA", f"Symbol={NIFTY_SYMBOL} strike_step={STRIKE_STEP} qty={ORDER_QTY} drop={DROP_PCT:.0%} hedge_ratio={HEDGE_RATIO:.0%}")
         emit("DATA", f"State file: {STATE_FILE}")
+        emit("DATA", f"Retry policy: max {MAX_ENTRY_ATTEMPTS} attempts/leg, cooldown {RETRY_COOLDOWN_SEC}s, min funds INR {MIN_REQUIRED_FUNDS:,.0f}")
         if not LIVE_TRADING:
             emit("WARN", "LIVE_TRADING is false: monitoring and hedge-selection only; no orders will be sent")
         emit("WARN", f"Configured LOT_SIZE={LOT_SIZE}; all entry, GTT and hedge-adjustment quantities are required to be exact lot multiples.")
         self.sync_broker(force=True)
+        # Free any leg that a previous version left permanently blocked by a
+        # failed (zero-position) entry.
+        try:
+            self.migrate_legacy_failed_trades()
+        except Exception as exc:
+            emit("ERROR", f"Legacy failed-trade migration error: {exc}")
 
         while self.running:
             try:
