@@ -642,15 +642,18 @@ def submit_gtt_oco(short_symbol: str, qty: int, short_avg: float, current_ltp: f
         raise ValueError("TARGET_PROFIT_PCT must be between 0 and 1")
     # Levels derived from the broker's average sell price (no saved signal LTP):
     # open is implied by the drop rule, SL sits halfway between fill and implied open.
+#    implied_open = short_avg / (1.0 - DROP_PCT)
+#    sl_trigger = round_to_tick(short_avg + (implied_open - short_avg) / 2.0, "up")
+    # SL at the implied option open price
     implied_open = short_avg / (1.0 - DROP_PCT)
-    sl_trigger = round_to_tick(short_avg + (implied_open - short_avg) / 2.0, "up")
+    sl_trigger = round_to_tick(implied_open, "up")
     target_trigger = round_to_tick(short_avg * (1.0 - TARGET_PROFIT_PCT), "down")
     if not (sl_trigger > current_ltp and target_trigger < current_ltp):
         raise OcoLevelCrossed(f"OCO levels do not bracket LTP: ltp={current_ltp:.2f} SL={sl_trigger:.2f} target={target_trigger:.2f}")
     payload = {
         "side": 1, "symbol": short_symbol, "productType": PRODUCT_TYPE,
         "orderInfo": {
-            "leg1": {"price": round_to_tick(sl_trigger + TICK_SIZE, "up"), "triggerPrice": sl_trigger, "qty": qty},
+            "leg1": {"price": round_to_tick(sl_trigger * 1.05, "up"), "triggerPrice": sl_trigger, "qty": qty},
             "leg2": {"price": round_to_tick(target_trigger + TICK_SIZE, "up"), "triggerPrice": target_trigger, "qty": qty},
         },
     }
